@@ -456,13 +456,79 @@ impl Parse for Body {
 
 impl Parse for Arg {
     fn parse(ctx: &mut Context) -> Result<Self> {
-        todo!()
+        if ctx.peek(0)?.kind == TokenKind::ParenOpen {
+            Ok(Self::Id(Parse::parse(ctx)?))
+        } else {
+            Ok(Self::Args(Parse::parse(ctx)?))
+        }
+    }
+}
+
+impl Parse for Args {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let mut args = vec![];
+
+        while ctx.peek(0)?.kind != TokenKind::Period && ctx.peek(0)?.kind != TokenKind::ParenClose {
+            args.push(Parse::parse(ctx)?);
+        }
+
+        let varg = if ctx.peek(0)?.kind == TokenKind::Period {
+            Some(Parse::parse(ctx)?)
+        } else {
+            None
+        };
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            args,
+            varg,
+        })
     }
 }
 
 impl Parse for Bindings {
     fn parse(ctx: &mut Context) -> Result<Self> {
-        todo!()
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let mut bindings = vec![];
+
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            bindings.push(Parse::parse(ctx)?);
+        }
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            bindings,
+        })
+    }
+}
+
+impl Parse for Binding {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let id = Parse::parse(ctx)?;
+        let exp = Parse::parse(ctx)?;
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            id,
+            exp,
+        })
     }
 }
 
@@ -549,8 +615,7 @@ impl Parse for Id {
         let t = ctx.read()?;
 
         let TokenKind::Id(id) = t.kind else {
-            panic!("Not Id")
-            //bail!("Not Id")
+            bail!("Not Id")
         };
 
         Ok(Id {

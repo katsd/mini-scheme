@@ -182,12 +182,14 @@ pub enum Arg {
 #[derive(Debug)]
 pub struct Args {
     pub meta: Meta,
+    pub args: Vec<Id>,
+    pub varg : Option<Id>,
 }
 
 #[derive(Debug)]
 pub struct Bindings {
     pub meta: Meta,
-    pub v: Vec<Binding>,
+    pub bindings: Vec<Binding>,
 }
 
 #[derive(Debug)]
