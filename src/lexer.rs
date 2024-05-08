@@ -86,7 +86,7 @@ pub fn get_tokens(src: String) -> Vec<Token> {
             "do" => Some(TokenKind::Do),
             _ => {
                 if symbol.starts_with('"') && symbol.ends_with('"') {
-                    Some(TokenKind::Str(symbol.clone()[1..(symbol.len() - 1)].to_string()))
+                    Some(TokenKind::Str(symbol))
                 } else if symbol == "#t" {
                     Some(TokenKind::Bool(true))
                 } else if symbol == "#f" {
@@ -113,7 +113,7 @@ fn read_next_symbol(reader: &mut reader::Reader) -> Option<String> {
     }
 
     if reader.peek() == Some('"') {
-        return Some(read_next_string(reader));
+        return read_next_string(reader);
     }
 
     let mut symbol = "".to_string();
@@ -131,8 +131,30 @@ fn read_next_symbol(reader: &mut reader::Reader) -> Option<String> {
     Some(symbol)
 }
 
-fn read_next_string(reader: &mut reader::Reader) -> String {
-    unimplemented!()
+fn read_next_string(reader: &mut reader::Reader) -> Option<String> {
+    if !reader.has_data() || reader.read() != Some('"') {
+        return None;
+    }
+
+    let mut str = "".to_string();
+
+    loop {
+        let c = reader.read()?;
+
+        if c == '\\' {
+            let c = reader.read()?;
+            str.push(c);
+            continue;
+        }
+
+        if c == '"' {
+            break;
+        }
+
+        str.push(c);
+    }
+
+    Some(str)
 }
 
 mod reader {
