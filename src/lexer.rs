@@ -136,7 +136,7 @@ fn read_next_string(reader: &mut reader::Reader) -> Option<String> {
         return None;
     }
 
-    let mut str = "".to_string();
+    let mut str = "\"".to_string();
 
     loop {
         let c = reader.read()?;
@@ -147,11 +147,11 @@ fn read_next_string(reader: &mut reader::Reader) -> Option<String> {
             continue;
         }
 
+        str.push(c);
+
         if c == '"' {
             break;
         }
-
-        str.push(c);
     }
 
     Some(str)
