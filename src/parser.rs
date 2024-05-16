@@ -131,7 +131,7 @@ impl Parse for DefFunc {
 
         ensure_paren_close!(ctx);
 
-        let exp = Parse::parse(ctx)?;
+        let body = Parse::parse(ctx)?;
 
         ensure_paren_close!(ctx);
 
@@ -140,7 +140,7 @@ impl Parse for DefFunc {
             id,
             args,
             varg,
-            exp,
+            body,
         })
     }
 }
@@ -169,7 +169,7 @@ impl Parse for Exp {
             TokenKind::Num(_) | TokenKind::Bool(_) | TokenKind::Str(_) => {
                 Ok(Self::Const(Parse::parse(ctx)?))
             }
-            _ => bail!("Not Exp"),
+            _ => panic!("Not Exp"), //bail!("Not Exp"),
         }
     }
 }
@@ -223,7 +223,7 @@ impl Parse for Quote {
         ctx.start();
 
         ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Lambda, "quote");
+        ensure_symbol!(ctx, TokenKind::Quote, "quote");
 
         let s_exp = Parse::parse(ctx)?;
 
@@ -241,7 +241,7 @@ impl Parse for Set {
         ctx.start();
 
         ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Lambda, "set");
+        ensure_symbol!(ctx, TokenKind::Set, "set!");
 
         let id = Parse::parse(ctx)?;
         let exp = Parse::parse(ctx)?;
@@ -261,7 +261,7 @@ impl Parse for Let {
         ctx.start();
 
         ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Lambda, "let");
+        ensure_symbol!(ctx, TokenKind::Let, "let");
 
         let id = if let TokenKind::Id(_) = ctx.peek(0)?.kind {
             Some(Parse::parse(ctx)?)
@@ -288,7 +288,7 @@ impl Parse for LetAster {
         ctx.start();
 
         ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Lambda, "let*");
+        ensure_symbol!(ctx, TokenKind::LetAster, "let*");
 
         let bindings = Parse::parse(ctx)?;
         let body = Parse::parse(ctx)?;
@@ -308,7 +308,7 @@ impl Parse for LetRec {
         ctx.start();
 
         ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Lambda, "letrec");
+        ensure_symbol!(ctx, TokenKind::LetRec, "letrec");
 
         let bindings = Parse::parse(ctx)?;
         let body = Parse::parse(ctx)?;

@@ -1,5 +1,5 @@
 use std::ops::Range;
-use crate::number::Number;
+use crate::obj::*;
 
 #[derive(Debug, Clone)]
 pub struct Token {

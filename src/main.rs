@@ -7,6 +7,9 @@ mod lexer;
 mod number;
 mod parser;
 mod syntax;
+mod vm;
+mod codegen;
+mod obj;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -21,9 +24,17 @@ fn main() {
 
     let tokens = get_tokens(src);
 
-    println!("{:?}", tokens);
+    println!("{:?}\n", tokens);
 
     let ast = parser::parse(tokens).unwrap();
 
-    println!("{:?}", ast);
+    println!("{:?}\n", ast);
+
+    let insts = codegen::generate(&ast);
+
+    println!("{:?}\n", insts);
+
+    for (idx, inst) in insts.iter().enumerate() {
+        println!("{:2} {:?}", idx, inst);
+    }
 }
