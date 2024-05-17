@@ -264,6 +264,10 @@ impl<T> NonEmptyVec<T> {
         self.inner.push(t);
     }
 
+    pub fn insert(&mut self, idx: usize, t: T) {
+        self.inner.insert(idx, t);
+    }
+
     pub fn len(&self) -> usize {
         self.inner.len()
     }

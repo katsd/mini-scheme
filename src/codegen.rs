@@ -246,13 +246,78 @@ impl Gen for syntax::Let {
 
 impl Gen for syntax::LetAster {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let mut t = syntax::Let {
+            meta: self.meta.clone(),
+            id: None,
+            bindings: syntax::Bindings {
+                meta: self.meta.clone(),
+                bindings: vec![],
+            },
+            body: self.body.clone(),
+        };
+
+        for b in self.bindings.bindings.iter().rev() {
+            t = syntax::Let {
+                meta: self.meta.clone(),
+                id: None,
+                bindings: syntax::Bindings {
+                    meta: self.meta.clone(),
+                    bindings: vec![b.clone()],
+                },
+                body: syntax::Body {
+                    meta: self.meta.clone(),
+                    defs: vec![],
+                    exps: syntax::NonEmptyVec::new(syntax::Exp::Let(Box::new(t))),
+                },
+            };
+        }
+
+        t.gen(builder);
     }
 }
 
 impl Gen for syntax::LetRec {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let bindings = self
+            .bindings
+            .bindings
+            .iter()
+            .map(|b| syntax::Binding {
+                meta: b.meta.clone(),
+                id: b.id.clone(),
+                exp: syntax::Exp::Const(syntax::Const::Null(syntax::Null {
+                    meta: b.meta.clone(),
+                })),
+            })
+            .collect::<Vec<_>>();
+
+        let mut exps = self.body.exps.clone();
+
+        for b in &self.bindings.bindings {
+            exps.insert(
+                0,
+                syntax::Exp::Set(Box::new(syntax::Set {
+                    meta: b.meta.clone(),
+                    id: b.id.clone(),
+                    exp: b.exp.clone(),
+                })),
+            );
+        }
+
+        syntax::Let {
+            meta: self.meta.clone(),
+            id: None,
+            bindings: syntax::Bindings {
+                meta: self.bindings.meta.clone(),
+                bindings,
+            },
+            body: syntax::Body {
+                meta: self.body.meta.clone(),
+                defs: self.body.defs.clone(),
+                exps,
+            },
+        }
+        .gen(builder);
     }
 }
 
