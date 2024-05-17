@@ -4,7 +4,6 @@ use std::io::BufReader;
 use crate::lexer::get_tokens;
 
 mod lexer;
-mod number;
 mod parser;
 mod syntax;
 mod vm;

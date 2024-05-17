@@ -1,7 +1,7 @@
 use crate::syntax;
 use crate::obj::*;
 use crate::vm::Inst;
-use builder::Builder;
+use builder::{Builder, TempInst};
 
 pub fn generate(ast: &syntax::AST) -> Vec<Inst> {
     let mut builder = Builder::new();
@@ -103,8 +103,8 @@ impl Gen for syntax::Lambda {
         let lambda_id = builder.get_label();
         let label = builder.get_label();
 
-        builder.push_closure(lambda_id);
-        builder.push_jump(label);
+        builder.push_temp(TempInst::CreateClosure(lambda_id));
+        builder.push_temp(TempInst::Jump(label));
 
         builder.push_label(lambda_id);
 
@@ -160,7 +160,7 @@ impl Gen for syntax::Apply {
         let label = builder.get_label();
 
         if builtin_inst.is_none() {
-            builder.push_return_context(label);
+            builder.push_temp(TempInst::PushReturnContext(label));
         }
 
         for exp in &self.exps {
@@ -258,25 +258,107 @@ impl Gen for syntax::LetRec {
 
 impl Gen for syntax::If {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        self.cond.gen(builder);
+        builder.push(Inst::Not);
+
+        let label_else = builder.get_label();
+
+        builder.push_temp(TempInst::JumpIf(label_else));
+
+        self.then.gen(builder);
+
+        let label_exit = builder.get_label();
+        builder.push_temp(TempInst::Jump(label_exit));
+        builder.push_label(label_else);
+
+        if let Some(el) = &self.el {
+            el.gen(builder);
+        } else {
+            builder.push(Inst::Push(Obj::Null));
+        }
+
+        builder.push_label(label_exit);
     }
 }
 
 impl Gen for syntax::Cond {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let label_exit = builder.get_label();
+
+        for m in &self.matches {
+            m.cond.gen(builder);
+            builder.push(Inst::Not);
+
+            let label = builder.get_label();
+
+            builder.push_temp(TempInst::JumpIf(label));
+
+            for (i, exp) in m.then.get().iter().enumerate() {
+                exp.gen(builder);
+
+                if i < m.then.len() - 1 {
+                    builder.push(Inst::Pop);
+                }
+            }
+
+            builder.push_temp(TempInst::Jump(label_exit));
+            builder.push_label(label);
+        }
+
+        if let Some(el) = &self.el {
+            for (i, exp) in el.get().iter().enumerate() {
+                exp.gen(builder);
+
+                if i < el.len() - 1 {
+                    builder.push(Inst::Pop);
+                }
+            }
+        } else {
+            builder.push(Inst::Push(Obj::Null));
+        }
+
+        builder.push_label(label_exit);
     }
 }
 
 impl Gen for syntax::And {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let label_false = builder.get_label();
+        let label_exit = builder.get_label();
+
+        for exp in &self.exps {
+            exp.gen(builder);
+            builder.push(Inst::Not);
+            builder.push_temp(TempInst::JumpIf(label_false));
+        }
+
+        builder.push(Inst::Push(Obj::Bool(true)));
+        builder.push_temp(TempInst::Jump(label_exit));
+
+        builder.push_label(label_false);
+        builder.push(Inst::Push(Obj::Bool(false)));
+
+        builder.push_label(label_exit);
     }
 }
 
 impl Gen for syntax::Or {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let label_true = builder.get_label();
+        let label_exit = builder.get_label();
+
+        for exp in &self.exps {
+            exp.gen(builder);
+            builder.push_temp(TempInst::JumpIf(label_true));
+        }
+
+        builder.push(Inst::Push(Obj::Bool(false)));
+        builder.push_temp(TempInst::Jump(label_exit));
+
+        builder.push_label(label_true);
+        builder.push(Inst::Push(Obj::Bool(true)));
+
+        builder.push_label(label_exit);
     }
 }
 
@@ -294,7 +376,64 @@ impl Gen for syntax::Begin {
 
 impl Gen for syntax::Do {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        let label_start = builder.get_label();
+        let label_exit = builder.get_label();
+        let lambda_id = builder.get_label();
+        let label_lambda_exit = builder.get_label();
+
+        builder.push_temp(TempInst::PushReturnContext(label_exit));
+        builder.push_temp(TempInst::CreateClosure(lambda_id));
+        builder.push_temp(TempInst::Jump(label_lambda_exit));
+
+        builder.push_label(lambda_id);
+
+        for b in &self.bindings {
+            syntax::DefVar {
+                meta: b.meta.clone(),
+                id: b.id.clone(),
+                exp: b.i.clone(),
+            }
+            .gen(builder);
+            builder.push(Inst::Pop);
+        }
+
+        builder.push_label(label_start);
+
+        self.cond.gen(builder);
+
+        let label_ret = builder.get_label();
+        builder.push_temp(TempInst::JumpIf(label_ret));
+
+        self.body.gen(builder);
+        builder.push(Inst::Pop);
+
+        for b in &self.bindings {
+            syntax::Set {
+                meta: b.meta.clone(),
+                id: b.id.clone(),
+                exp: b.u.clone(),
+            }
+            .gen(builder);
+            builder.push(Inst::Pop);
+        }
+
+        builder.push_temp(TempInst::Jump(label_start));
+
+        builder.push_label(label_ret);
+
+        for (i, v) in self.value.iter().enumerate() {
+            v.gen(builder);
+
+            if i < self.value.len() - 1 {
+                builder.push(Inst::Pop);
+            }
+        }
+
+        builder.push(Inst::Ret);
+        builder.push_label(label_lambda_exit);
+
+        builder.push(Inst::Call);
+        builder.push_label(label_exit);
     }
 }
 
@@ -302,10 +441,14 @@ impl Gen for syntax::Body {
     fn gen(&self, builder: &mut Builder) {
         for def in &self.defs {
             def.gen(builder);
+            builder.push(Inst::Pop);
         }
 
-        for exp in self.exps.get() {
+        for (i, exp) in self.exps.get().iter().enumerate() {
             exp.gen(builder);
+            if i < self.exps.len() - 1 {
+                builder.push(Inst::Pop);
+            }
         }
     }
 }
@@ -419,6 +562,7 @@ mod builder {
     pub enum TempInst {
         Raw(Inst),
         Jump(u32),
+        JumpIf(u32),
         CreateClosure(u32),
         PushReturnContext(u32),
         Label(u32),
@@ -441,18 +585,12 @@ mod builder {
             self.insts.push(TempInst::Raw(inst));
         }
 
-        pub fn push_label(&mut self, label: u32) {
-            self.insts.push(TempInst::Label(label));
+        pub fn push_temp(&mut self, inst: TempInst) {
+            self.insts.push(inst);
         }
 
-        pub fn push_jump(&mut self, label: u32) {
-            self.insts.push(TempInst::Jump(label));
-        }
-        pub fn push_return_context(&mut self, label: u32) {
-            self.insts.push(TempInst::PushReturnContext(label));
-        }
-        pub fn push_closure(&mut self, id: u32) {
-            self.insts.push(TempInst::CreateClosure(id));
+        pub fn push_label(&mut self, label: u32) {
+            self.insts.push(TempInst::Label(label));
         }
 
         pub fn build(&self) -> Vec<Inst> {
@@ -474,6 +612,7 @@ mod builder {
                 match i {
                     TempInst::Raw(i) => insts.push(i.clone()),
                     TempInst::Jump(i) => insts.push(Inst::Jump(*label_to_pc.get(i).unwrap())),
+                    TempInst::JumpIf(i) => insts.push(Inst::JumpIf(*label_to_pc.get(i).unwrap())),
                     TempInst::CreateClosure(i) => {
                         insts.push(Inst::CreateClosure(*label_to_pc.get(i).unwrap()))
                     }

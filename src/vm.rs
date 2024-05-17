@@ -17,6 +17,7 @@ pub enum Inst {
     Get(Id),
     Def(Id),
     Jump(u32),
+    JumpIf(u32),
     Call,
     Ret,
     PushReturnContext(u32),
@@ -35,6 +36,10 @@ pub enum Inst {
     Le,  // <=
     Gt,  // >
     Ge,  // >=
+
+    And,
+    Or,
+    Not,
 
     Cons,
     Car,
@@ -68,9 +73,10 @@ pub fn exec(insts: Vec<Inst>) {
 
     macro_rules! push {
         ($obj:expr) => {{
-            update_ref_cnt(&$obj, &mut frame_stack, true);
+            let v = $obj;
+            update_ref_cnt(&v, &mut frame_stack, true);
             sp += 1;
-            stack[sp] = $obj;
+            stack[sp] = v;
         }};
     }
 
@@ -119,9 +125,15 @@ pub fn exec(insts: Vec<Inst>) {
                 let frame = frame_stack[fp as usize].as_mut().unwrap();
                 frame.table.insert(id.clone(), Obj::Null);
             }
-            Inst::Jump(next_pc) => {
-                pc = *next_pc;
+            Inst::Jump(pc_next) => {
+                pc = *pc_next;
                 continue;
+            }
+            Inst::JumpIf(pc_next) => {
+                if pop!().bool() {
+                    pc = *pc_next;
+                    continue;
+                };
             }
             Inst::Call => {
                 let Obj::Closure {
@@ -244,6 +256,15 @@ pub fn exec(insts: Vec<Inst>) {
                 };
 
                 push!(obj);
+            }
+            Inst::And => {
+                push!(Obj::Bool(pop!().bool() && pop!().bool()));
+            }
+            Inst::Or => {
+                push!(Obj::Bool(pop!().bool() || pop!().bool()));
+            }
+            Inst::Not => {
+                push!(Obj::Bool(!pop!().bool()));
             }
             Inst::Cons => {
                 let r = pop_retaining_ref!();

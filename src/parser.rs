@@ -362,7 +362,66 @@ impl Parse for If {
 
 impl Parse for Cond {
     fn parse(ctx: &mut Context) -> Result<Self> {
-        todo!()
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+        ensure_symbol!(ctx, TokenKind::Cond, "cond");
+
+        let mut matches = vec![];
+        let mut el = None;
+
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            if ctx.peek(1)?.kind == TokenKind::Else {
+                ensure_paren_open!(ctx);
+                ensure_symbol!(ctx, TokenKind::Else, "else");
+
+                let mut exps = NonEmptyVec::new(Parse::parse(ctx)?);
+
+                while ctx.peek(0)?.kind != TokenKind::ParenClose {
+                    exps.push(Parse::parse(ctx)?);
+                }
+
+                el = Some(exps);
+
+                ensure_paren_close!(ctx);
+
+                break;
+            }
+
+            matches.push(Parse::parse(ctx)?);
+        }
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            matches,
+            el,
+        })
+    }
+}
+
+impl Parse for Match {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let cond = Parse::parse(ctx)?;
+
+        let mut then = NonEmptyVec::new(Parse::parse(ctx)?);
+
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            then.push(Parse::parse(ctx)?);
+        }
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            cond,
+            then,
+        })
     }
 }
 
@@ -434,7 +493,60 @@ impl Parse for Begin {
 
 impl Parse for Do {
     fn parse(ctx: &mut Context) -> Result<Self> {
-        todo!()
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+        ensure_symbol!(ctx, TokenKind::Do, "do");
+
+        let mut bindings = vec![];
+
+        ensure_paren_open!(ctx);
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            bindings.push(Parse::parse(ctx)?);
+        }
+        ensure_paren_close!(ctx);
+
+        ensure_paren_open!(ctx);
+        let cond = Parse::parse(ctx)?;
+
+        let mut value = vec![];
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            value.push(Parse::parse(ctx)?);
+        }
+        ensure_paren_close!(ctx);
+
+        let body = Parse::parse(ctx)?;
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            bindings,
+            cond,
+            value,
+            body,
+        })
+    }
+}
+
+impl Parse for DoBinding {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let id = Parse::parse(ctx)?;
+        let i = Parse::parse(ctx)?;
+        let u = Parse::parse(ctx)?;
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            id,
+            i,
+            u,
+        })
     }
 }
 
