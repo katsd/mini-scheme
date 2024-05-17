@@ -32,9 +32,11 @@ fn main() {
 
     let insts = codegen::generate(&ast);
 
-    println!("{:?}\n", insts);
-
     for (idx, inst) in insts.iter().enumerate() {
         println!("{:2} {:?}", idx, inst);
     }
+
+    println!("---------------");
+
+    vm::exec(insts);
 }

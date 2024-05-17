@@ -10,6 +10,8 @@ pub fn generate(ast: &syntax::AST) -> Vec<Inst> {
         t.gen(&mut builder);
     }
 
+    builder.push(Inst::Exit);
+
     builder.build()
 }
 
@@ -47,6 +49,7 @@ impl Gen for syntax::DefVar {
         builder.push(Inst::Def(Id(self.id.v.clone())));
         self.exp.gen(builder);
         builder.push(Inst::Set(Id(self.id.v.clone())));
+        builder.push(Inst::Push(Obj::Null));
     }
 }
 
@@ -69,6 +72,7 @@ impl Gen for syntax::DefFunc {
         };
 
         set.gen(builder);
+        builder.push(Inst::Push(Obj::Null));
     }
 }
 
@@ -132,7 +136,7 @@ impl Gen for syntax::Apply {
         let builtin_inst = if let syntax::Exp::Id(id) = &self.func {
             match id.v.as_str() {
                 "display" => Some(Inst::Display),
-                "newline" => Some(Inst::Display),
+                "newline" => Some(Inst::Newline),
                 "+" => Some(Inst::Add),
                 "-" => Some(Inst::Sub),
                 "*" => Some(Inst::Mul),
@@ -148,8 +152,10 @@ impl Gen for syntax::Apply {
             None
         };
 
+        let label = builder.get_label();
+
         if builtin_inst.is_none() {
-            builder.push(Inst::PushFp);
+            builder.push_return_context(label);
         }
 
         for exp in &self.exps {
@@ -163,6 +169,8 @@ impl Gen for syntax::Apply {
 
         self.func.gen(builder);
         builder.push(Inst::Call);
+
+        builder.push_label(label);
     }
 }
 
@@ -176,6 +184,7 @@ impl Gen for syntax::Set {
     fn gen(&self, builder: &mut Builder) {
         self.exp.gen(builder);
         builder.push(Inst::Set(Id(self.id.v.clone())));
+        builder.push(Inst::Push(Obj::Null));
     }
 }
 
@@ -367,7 +376,7 @@ impl Gen for syntax::Null {
 
 impl Gen for syntax::Id {
     fn gen(&self, builder: &mut Builder) {
-        builder.push(Inst::Push(Obj::Id(Id(self.v.clone()))));
+        builder.push(Inst::Get(Id(self.v.clone())));
     }
 }
 
@@ -384,6 +393,7 @@ mod builder {
         Raw(Inst),
         Jump(u32),
         CreateClosure(u32),
+        PushReturnContext(u32),
         Label(u32),
     }
 
@@ -411,7 +421,9 @@ mod builder {
         pub fn push_jump(&mut self, label: u32) {
             self.insts.push(TempInst::Jump(label));
         }
-
+        pub fn push_return_context(&mut self, label: u32) {
+            self.insts.push(TempInst::PushReturnContext(label));
+        }
         pub fn push_closure(&mut self, id: u32) {
             self.insts.push(TempInst::CreateClosure(id));
         }
@@ -437,6 +449,9 @@ mod builder {
                     TempInst::Jump(i) => insts.push(Inst::Jump(*label_to_pc.get(i).unwrap())),
                     TempInst::CreateClosure(i) => {
                         insts.push(Inst::CreateClosure(*label_to_pc.get(i).unwrap()))
+                    }
+                    TempInst::PushReturnContext(i) => {
+                        insts.push(Inst::PushReturnContext(*label_to_pc.get(i).unwrap()))
                     }
                     TempInst::Label(_) => continue,
                 }

@@ -1,3 +1,4 @@
+use std::mem::take;
 use std::ops::Range;
 use crate::obj::*;
 
@@ -72,6 +73,7 @@ pub fn get_tokens(src: String) -> Vec<Token> {
             "." => Some(TokenKind::Period),
             "load" => Some(TokenKind::Load),
             "define" => Some(TokenKind::Define),
+            "lambda" => Some(TokenKind::Lambda),
             "quote" => Some(TokenKind::Quote),
             "set!" => Some(TokenKind::Set),
             "let" => Some(TokenKind::Let),
@@ -86,7 +88,9 @@ pub fn get_tokens(src: String) -> Vec<Token> {
             "do" => Some(TokenKind::Do),
             _ => {
                 if symbol.starts_with('"') && symbol.ends_with('"') {
-                    Some(TokenKind::Str(symbol))
+                    Some(TokenKind::Str(
+                        symbol.chars().skip(1).take(symbol.chars().count() - 2).collect(),
+                    ))
                 } else if symbol == "#t" {
                     Some(TokenKind::Bool(true))
                 } else if symbol == "#f" {
@@ -108,6 +112,10 @@ pub fn get_tokens(src: String) -> Vec<Token> {
 }
 
 fn read_next_symbol(reader: &mut reader::Reader) -> Option<String> {
+    while reader.peek() == Some(';') {
+        while reader.has_data() && reader.read() != Some('\n') {}
+    }
+
     if !reader.has_data() {
         return None;
     }
@@ -182,7 +190,7 @@ mod reader {
         }
 
         pub fn is_symbol_ended(&self) -> bool {
-            let separators = vec![' ', '(', ')', '\n'];
+            let separators = vec![' ', '(', ')', '\n', ';'];
 
             self.src.get(self.idx - 1).map(|c| separators.contains(c)).unwrap_or(false)
                 || self.src.get(self.idx).map(|c| separators.contains(c)).unwrap_or(false)

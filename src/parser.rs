@@ -457,9 +457,9 @@ impl Parse for Body {
 impl Parse for Arg {
     fn parse(ctx: &mut Context) -> Result<Self> {
         if ctx.peek(0)?.kind == TokenKind::ParenOpen {
-            Ok(Self::Id(Parse::parse(ctx)?))
-        } else {
             Ok(Self::Args(Parse::parse(ctx)?))
+        } else {
+            Ok(Self::Id(Parse::parse(ctx)?))
         }
     }
 }
@@ -615,7 +615,8 @@ impl Parse for Id {
         let t = ctx.read()?;
 
         let TokenKind::Id(id) = t.kind else {
-            bail!("Not Id")
+            panic!("Not Id")
+            //bail!("Not Id")
         };
 
         Ok(Id {
