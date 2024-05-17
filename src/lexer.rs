@@ -26,6 +26,7 @@ pub enum TokenKind {
     ParenOpen,
     ParenClose,
     Period,
+    SingleQuote,
 
     Load,
     Define,
@@ -71,6 +72,7 @@ pub fn get_tokens(src: String) -> Vec<Token> {
             "(" => Some(TokenKind::ParenOpen),
             ")" => Some(TokenKind::ParenClose),
             "." => Some(TokenKind::Period),
+            "'" => Some(TokenKind::SingleQuote),
             "load" => Some(TokenKind::Load),
             "define" => Some(TokenKind::Define),
             "lambda" => Some(TokenKind::Lambda),
@@ -190,7 +192,7 @@ mod reader {
         }
 
         pub fn is_symbol_ended(&self) -> bool {
-            let separators = vec![' ', '(', ')', '\n', ';'];
+            let separators = vec![' ', '(', ')', '\n', ';', '\''];
 
             self.src.get(self.idx - 1).map(|c| separators.contains(c)).unwrap_or(false)
                 || self.src.get(self.idx).map(|c| separators.contains(c)).unwrap_or(false)

@@ -164,6 +164,8 @@ impl Parse for Exp {
                 TokenKind::Do => Ok(Self::Do(Box::new(Parse::parse(ctx)?))),
                 _ => Ok(Self::Apply(Box::new(Parse::parse(ctx)?))),
             },
+            TokenKind::SingleQuote => Ok(Self::Quote(Box::new(Parse::parse(ctx)?))),
+
             TokenKind::Id(_) => Ok(Self::Id(Parse::parse(ctx)?)),
 
             TokenKind::Num(_) | TokenKind::Bool(_) | TokenKind::Str(_) => {
@@ -222,12 +224,20 @@ impl Parse for Quote {
     fn parse(ctx: &mut Context) -> Result<Self> {
         ctx.start();
 
-        ensure_paren_open!(ctx);
-        ensure_symbol!(ctx, TokenKind::Quote, "quote");
+        let s_exp = if ctx.peek(0)?.kind == TokenKind::SingleQuote {
+            ensure_symbol!(ctx, TokenKind::SingleQuote, "'");
 
-        let s_exp = Parse::parse(ctx)?;
+            Parse::parse(ctx)?
+        } else {
+            ensure_paren_open!(ctx);
+            ensure_symbol!(ctx, TokenKind::Quote, "quote");
 
-        ensure_paren_close!(ctx);
+            let s_exp = Parse::parse(ctx)?;
+
+            ensure_paren_close!(ctx);
+
+            s_exp
+        };
 
         Ok(Self {
             meta: ctx.meta(),
@@ -543,11 +553,44 @@ impl Parse for SExp {
                 if ctx.peek(1)?.kind == TokenKind::ParenClose {
                     Ok(Self::Const(Parse::parse(ctx)?))
                 } else {
-                    todo!()
+                    Ok(Self::Pair(Box::new(Parse::parse(ctx)?)))
                 }
             }
             _ => bail!("Not S-Exp"),
         }
+    }
+}
+
+impl Parse for Pair {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+
+        let mut exps = vec![];
+
+        while ctx.peek(0)?.kind != TokenKind::Period && ctx.peek(0)?.kind != TokenKind::ParenClose {
+            exps.push(Parse::parse(ctx)?);
+        }
+
+        let last = if ctx.peek(0)?.kind == TokenKind::Period {
+            if exps.len() == 0 {
+                panic!("Invalid S-Exp")
+            }
+
+            let _ = ctx.read()?;
+            Some(Parse::parse(ctx)?)
+        } else {
+            None
+        };
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            exps,
+            last,
+        })
     }
 }
 

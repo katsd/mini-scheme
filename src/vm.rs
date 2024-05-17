@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use crate::obj::*;
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,12 @@ pub enum Inst {
     Le,  // <=
     Gt,  // >
     Ge,  // >=
+
+    Cons,
+    Car,
+    Cdr,
+    SetCar,
+    SetCdr,
 }
 
 pub fn exec(insts: Vec<Inst>) {
@@ -53,12 +60,29 @@ pub fn exec(insts: Vec<Inst>) {
     macro_rules! pop {
         () => {{
             let v = std::mem::replace(&mut stack[sp], Obj::Null);
+            update_ref_cnt(&v, &mut frame_stack, false);
             sp -= 1;
             v
         }};
     }
 
     macro_rules! push {
+        ($obj:expr) => {{
+            update_ref_cnt(&$obj, &mut frame_stack, true);
+            sp += 1;
+            stack[sp] = $obj;
+        }};
+    }
+
+    macro_rules! pop_retaining_ref {
+        () => {{
+            let v = std::mem::replace(&mut stack[sp], Obj::Null);
+            sp -= 1;
+            v
+        }};
+    }
+
+    macro_rules! push_retaining_ref {
         ($obj:expr) => {{
             sp += 1;
             stack[sp] = $obj;
@@ -73,19 +97,15 @@ pub fn exec(insts: Vec<Inst>) {
         match inst {
             Inst::Push(obj) => {
                 push!(obj.clone());
-                update_ref_cnt(obj, &mut frame_stack, true);
             }
             Inst::Pop => {
-                let v = pop!();
-                update_ref_cnt(&v, &mut frame_stack, false);
+                pop!();
             }
             Inst::Set(id) => {
-                let v = pop!();
+                let v = pop_retaining_ref!();
 
                 let prev = find_var(&id, &fp, &mut frame_stack, |obj| std::mem::replace(obj, v))
                     .expect(&format!("{} is not defined", id.0));
-
-                println!("{:?}", prev);
 
                 update_ref_cnt(&prev, &mut frame_stack, false);
             }
@@ -93,7 +113,6 @@ pub fn exec(insts: Vec<Inst>) {
                 let v = find_var(&id, &fp, &mut frame_stack, |obj| obj.clone())
                     .expect(&format!("{} is not defined", id.0));
 
-                update_ref_cnt(&v, &mut frame_stack, true);
                 push!(v);
             }
             Inst::Def(id) => {
@@ -108,7 +127,7 @@ pub fn exec(insts: Vec<Inst>) {
                 let Obj::Closure {
                     addr,
                     fp: fp_parent,
-                } = pop!()
+                } = pop_retaining_ref!()
                 else {
                     panic!("Not closure")
                 };
@@ -136,12 +155,10 @@ pub fn exec(insts: Vec<Inst>) {
                     update_ref_cnt(&obj, &mut frame_stack, false);
                 }
 
-                let v = pop!();
+                let v = pop_retaining_ref!();
 
                 loop {
                     let v = pop!();
-
-                    update_ref_cnt(&v, &mut frame_stack, false);
 
                     let Obj::Context {
                         pc: pc_prev,
@@ -159,12 +176,11 @@ pub fn exec(insts: Vec<Inst>) {
                     break;
                 }
 
-                push!(v);
+                push_retaining_ref!(v);
 
                 continue;
             }
             Inst::Exit => {
-                println!("{:?}", frame_stack);
                 return;
             }
             Inst::PushReturnContext(pc) => {
@@ -172,12 +188,10 @@ pub fn exec(insts: Vec<Inst>) {
             }
             Inst::CreateClosure(pc) => {
                 let v = Obj::Closure { addr: *pc, fp };
-                update_ref_cnt(&v, &mut frame_stack, true);
                 push!(v);
             }
             Inst::Display => {
                 let v = pop!();
-                update_ref_cnt(&v, &mut frame_stack, false);
 
                 print!("{}", v);
                 push!(Obj::Null);
@@ -230,6 +244,65 @@ pub fn exec(insts: Vec<Inst>) {
                 };
 
                 push!(obj);
+            }
+            Inst::Cons => {
+                let r = pop_retaining_ref!();
+                let l = pop_retaining_ref!();
+
+                let v = Obj::Pair(Arc::new(Mutex::new(Box::new((l, r)))));
+                push_retaining_ref!(v);
+            }
+            Inst::Car => {
+                let Obj::Pair(v) = pop_retaining_ref!() else {
+                    panic!("Not Pair")
+                };
+
+                let v = v.lock().unwrap();
+
+                let l = &v.0;
+                let r = &v.1;
+
+                update_ref_cnt(&r, &mut frame_stack, false);
+                push_retaining_ref!(l.clone());
+            }
+            Inst::Cdr => {
+                let Obj::Pair(v) = pop_retaining_ref!() else {
+                    panic!("Not Pair")
+                };
+
+                let v = v.lock().unwrap();
+
+                let l = &v.0;
+                let r = &v.1;
+
+                update_ref_cnt(&l, &mut frame_stack, false);
+                push_retaining_ref!(r.clone());
+            }
+            Inst::SetCar => {
+                let l = pop_retaining_ref!();
+
+                let Obj::Pair(v) = pop_retaining_ref!() else {
+                    panic!("Not Pair")
+                };
+
+                let mut v = v.lock().unwrap();
+
+                let l = std::mem::replace(&mut v.0, l);
+
+                update_ref_cnt(&l, &mut frame_stack, false);
+            }
+            Inst::SetCdr => {
+                let r = pop_retaining_ref!();
+
+                let Obj::Pair(v) = pop_retaining_ref!() else {
+                    panic!("Not Pair")
+                };
+
+                let mut v = v.lock().unwrap();
+
+                let r = std::mem::replace(&mut v.1, r);
+
+                update_ref_cnt(&r, &mut frame_stack, false);
             }
         }
 

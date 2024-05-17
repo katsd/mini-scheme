@@ -203,12 +203,14 @@ pub struct Binding {
 pub enum SExp {
     Const(Const),
     Id(Id),
-    List(List),
+    Pair(Box<Pair>),
 }
 
 #[derive(Debug, Clone)]
-pub enum List {
-    // TODO
+pub struct Pair {
+    pub meta: Meta,
+    pub exps: Vec<SExp>,
+    pub last: Option<SExp>,
 }
 
 #[derive(Debug, Clone)]

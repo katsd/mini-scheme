@@ -146,6 +146,11 @@ impl Gen for syntax::Apply {
                 "<=" => Some(Inst::Le),
                 ">" => Some(Inst::Gt),
                 ">=" => Some(Inst::Ge),
+                "cons" => Some(Inst::Cons),
+                "car" => Some(Inst::Car),
+                "cdr" => Some(Inst::Cdr),
+                "set-car!" => Some(Inst::SetCar),
+                "set-cdr!" => Some(Inst::SetCdr),
                 _ => None,
             }
         } else {
@@ -176,7 +181,7 @@ impl Gen for syntax::Apply {
 
 impl Gen for syntax::Quote {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        self.s_exp.gen(builder);
     }
 }
 
@@ -333,8 +338,30 @@ impl Gen for syntax::SExp {
     fn gen(&self, builder: &mut Builder) {
         match self {
             Self::Const(t) => t.gen(builder),
-            Self::Id(t) => t.gen(builder),
-            Self::List(t) => todo!(),
+            Self::Id(t) => builder.push(Inst::Push(Obj::Id(Id(t.v.clone())))),
+            Self::Pair(t) => t.gen(builder),
+        }
+    }
+}
+
+impl Gen for syntax::Pair {
+    fn gen(&self, builder: &mut Builder) {
+        for (i, exp) in self.exps.iter().enumerate() {
+            if i == self.exps.len() - 1 {
+                exp.gen(builder);
+
+                if let Some(last) = &self.last {
+                    last.gen(builder);
+                } else {
+                    builder.push(Inst::Push(Obj::Null));
+                }
+            } else {
+                exp.gen(builder);
+            }
+        }
+
+        for _ in 0..self.exps.len() {
+            builder.push(Inst::Cons);
         }
     }
 }

@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum Obj {
@@ -6,7 +7,7 @@ pub enum Obj {
     Number(Number),
     String(String),
     Id(Id),
-    Pair { l: Box<Obj>, r: Box<Obj> },
+    Pair(Arc<Mutex<Box<(Obj, Obj)>>>),
     Closure { addr: u32, fp: u32 },
     Context { pc: u32, fp: u32 },
     Null,
@@ -18,11 +19,25 @@ impl Display for Obj {
             Obj::Bool(v) => write!(f, "{}", v),
             Obj::Number(v) => write!(f, "{}", v),
             Obj::String(v) => write!(f, "{}", v),
-            Obj::Id(v) => write!(f, "id({})", v.0),
-            Obj::Pair { l, r } => write!(f, "({}, {})", l, r),
+            Obj::Id(v) => write!(f, "{}", v.0),
+            Obj::Pair(v) => {
+                let v = v.lock().unwrap();
+                write!(f, "({})", display_pair(&v))
+            }
             Obj::Closure { addr, fp } => write!(f, "closure({}, {})", addr, fp),
             Obj::Context { pc, fp } => write!(f, "context({}, {})", pc, fp),
             Obj::Null => write!(f, "null"),
+        }
+    }
+}
+
+fn display_pair(pair: &(Obj, Obj)) -> String {
+    if let Obj::Pair(v) = &pair.1 {
+        format!("{} {}", pair.0, display_pair(&v.lock().unwrap()))
+    } else {
+        match pair.1 {
+            Obj::Null => format!("{}", pair.0),
+            _ => format!("{} . {}", pair.0, pair.1),
         }
     }
 }
