@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::read_to_string;
 use std::sync::{Arc, Mutex};
 use crate::obj::*;
 
@@ -23,6 +24,7 @@ pub enum Inst {
     Ret,
     PushReturnContext(u32),
     CreateClosure(u32),
+    Load,
     Exit,
 
     Display,
@@ -67,6 +69,8 @@ pub enum Inst {
 }
 
 pub fn exec(insts: Vec<Inst>) {
+    let mut insts = insts;
+
     let mut pc: u32 = 0;
 
     let mut sp = 0;
@@ -114,9 +118,9 @@ pub fn exec(insts: Vec<Inst>) {
     }
 
     loop {
-        let inst = &insts[pc as usize];
+        let inst = insts[pc as usize].clone();
 
-        match inst {
+        match &inst {
             Inst::Push(obj) => {
                 push!(obj.clone());
             }
@@ -227,6 +231,23 @@ pub fn exec(insts: Vec<Inst>) {
                 }
 
                 push_retaining_ref!(v);
+
+                continue;
+            }
+            Inst::Load => {
+                let src = pop!().string();
+                let src = read_to_string(&src).expect(&format!("Failed to open {}", src));
+
+                let tokens = crate::lexer::get_tokens(src);
+                let ast = crate::parser::parse(tokens).expect("Failed to parse");
+
+                let next_pc = insts.len() as u32;
+
+                insts = crate::codegen::join(insts, crate::codegen::generate(&ast, false));
+
+                insts.push(Inst::Jump(pc + 1));
+
+                pc = next_pc;
 
                 continue;
             }

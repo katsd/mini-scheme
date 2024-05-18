@@ -1,7 +1,7 @@
 use std::env;
-use std::fs::{File, read_to_string};
-use std::io::BufReader;
-use crate::lexer::get_tokens;
+use std::fs::read_to_string;
+
+use crate::vm::Inst;
 
 mod lexer;
 mod parser;
@@ -19,13 +19,9 @@ fn main() {
         &args[1]
     };
 
-    let src = vec![
-        include_str!("std.scm"),
-        &read_to_string(src).expect("Failed to open file"),
-    ]
-    .concat();
+    let src = read_to_string(src).expect("Failed to open file");
 
-    let tokens = get_tokens(src);
+    let tokens = lexer::get_tokens(src);
 
     println!("{:?}\n", tokens);
 
@@ -33,13 +29,22 @@ fn main() {
 
     println!("{:?}\n", ast);
 
-    let insts = codegen::generate(&ast);
+    let insts = codegen::generate(&ast, true);
 
     for (idx, inst) in insts.iter().enumerate() {
         println!("{:2} {:?}", idx, inst);
     }
 
-    println!("---------------");
+    let insts = codegen::join(prelude(), insts);
+
+    println!("\n==================\n");
 
     vm::exec(insts);
+}
+
+fn prelude() -> Vec<Inst> {
+    let src = include_str!("prelude.scm");
+    let tokens = lexer::get_tokens(src.into());
+    let ast = parser::parse(tokens).unwrap();
+    codegen::generate(&ast, false)
 }

@@ -3,16 +3,40 @@ use crate::obj::*;
 use crate::vm::Inst;
 use builder::{Builder, TempInst};
 
-pub fn generate(ast: &syntax::AST) -> Vec<Inst> {
+pub fn generate(ast: &syntax::AST, is_main: bool) -> Vec<Inst> {
     let mut builder = Builder::new();
 
     for t in &ast.body {
         t.gen(&mut builder);
     }
 
-    builder.push(Inst::Exit);
+    if is_main {
+        builder.push(Inst::Exit);
+    }
 
     builder.build()
+}
+
+pub fn join(l: Vec<Inst>, r: Vec<Inst>) -> Vec<Inst> {
+    let len_l = l.len();
+    let len_r = r.len();
+
+    let mut insts = l;
+    insts.extend(r);
+
+    for i in len_l..(len_l + len_r) {
+        let inst = insts.get_mut(i).unwrap();
+
+        match inst {
+            Inst::Jump(a) => *a += len_l as u32,
+            Inst::JumpIf(a) => *a += len_l as u32,
+            Inst::CreateClosure(a) => *a += len_l as u32,
+            Inst::PushReturnContext(a) => *a += len_l as u32,
+            _ => (),
+        }
+    }
+
+    insts
 }
 
 trait Gen {
@@ -31,7 +55,8 @@ impl Gen for syntax::Toplevel {
 
 impl Gen for syntax::Load {
     fn gen(&self, builder: &mut Builder) {
-        todo!()
+        self.src.gen(builder);
+        builder.push(Inst::Load);
     }
 }
 
