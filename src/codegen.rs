@@ -110,16 +110,23 @@ impl Gen for syntax::Lambda {
 
         match &self.arg {
             syntax::Arg::Args(args) => {
-                for id in args.args.iter().rev() {
+                for id in args.args.iter() {
                     builder.push(Inst::Def(Id(id.v.clone())));
                     builder.push(Inst::Set(Id(id.v.clone())));
                 }
 
-                // TODO: support varg
+                if let Some(id) = &args.varg {
+                    builder.push(Inst::Def(Id(id.v.clone())));
+                    builder.push(Inst::CollectVArg(Id(id.v.clone())));
+                    builder.push(Inst::Set(Id(id.v.clone())));
+                    builder.push(Inst::Push(Obj::Null));
+                }
             }
-            syntax::Arg::Id(id) => {
+            syntax::Arg::VArg(id) => {
                 builder.push(Inst::Def(Id(id.v.clone())));
+                builder.push(Inst::CollectVArg(Id(id.v.clone())));
                 builder.push(Inst::Set(Id(id.v.clone())));
+                builder.push(Inst::Push(Obj::Null));
             }
         }
 
@@ -133,24 +140,50 @@ impl Gen for syntax::Lambda {
 
 impl Gen for syntax::Apply {
     fn gen(&self, builder: &mut Builder) {
-        let builtin_inst = if let syntax::Exp::Id(id) = &self.func {
+        let is_apply = if let syntax::Exp::Id(id) = &self.func {
+            id.v.as_str() == "apply"
+        } else {
+            false
+        };
+
+        let func = if is_apply {
+            self.exps.get(0).as_ref().unwrap()
+        } else {
+            &self.func
+        };
+
+        let builtin_inst = if let syntax::Exp::Id(id) = func {
             match id.v.as_str() {
                 "display" => Some(Inst::Display),
-                "newline" => Some(Inst::Newline),
-                "+" => Some(Inst::Add),
-                "-" => Some(Inst::Sub),
-                "*" => Some(Inst::Mul),
-                "/" => Some(Inst::Div),
-                "=" => Some(Inst::Eq),
-                "<" => Some(Inst::Lt),
-                "<=" => Some(Inst::Le),
-                ">" => Some(Inst::Gt),
-                ">=" => Some(Inst::Ge),
+                "_+" => Some(Inst::Add),
+                "_-" => Some(Inst::Sub),
+                "_*" => Some(Inst::Mul),
+                "_/" => Some(Inst::Div),
+                "_=" => Some(Inst::Eq),
+                "_<" => Some(Inst::Lt),
+                "_<=" => Some(Inst::Le),
+                "_>" => Some(Inst::Gt),
+                "_>=" => Some(Inst::Ge),
+                "not" => Some(Inst::Not),
                 "cons" => Some(Inst::Cons),
                 "car" => Some(Inst::Car),
                 "cdr" => Some(Inst::Cdr),
                 "set-car!" => Some(Inst::SetCar),
                 "set-cdr!" => Some(Inst::SetCdr),
+                "null?" => Some(Inst::IsNull),
+                "pair?" => Some(Inst::IsPair),
+                "number?" => Some(Inst::IsNumber),
+                "boolean?" => Some(Inst::IsBool),
+                "string?" => Some(Inst::IsString),
+                "proc?" => Some(Inst::IsProc),
+                "symbol?" => Some(Inst::IsSymbol),
+                "eq?" => Some(Inst::IsEq),
+                "equal?" => Some(Inst::IsEqual),
+                "symbol->string" => Some(Inst::SymToStr),
+                "string->symbol" => Some(Inst::StrToSym),
+                "string->number" => Some(Inst::StrToNum),
+                "number->string" => Some(Inst::NumToStr),
+                "_string-append" => Some(Inst::StringAppend),
                 _ => None,
             }
         } else {
@@ -163,8 +196,22 @@ impl Gen for syntax::Apply {
             builder.push_temp(TempInst::PushReturnContext(label));
         }
 
-        for exp in &self.exps {
-            exp.gen(builder);
+        if is_apply {
+            for (i, exp) in self.exps.iter().enumerate().rev() {
+                if i == 0 {
+                    break;
+                }
+
+                exp.gen(builder);
+
+                if i == self.exps.len() - 1 {
+                    builder.push(Inst::ExpandList);
+                }
+            }
+        } else {
+            for exp in self.exps.iter().rev() {
+                exp.gen(builder);
+            }
         }
 
         if let Some(i) = builtin_inst {
@@ -172,7 +219,7 @@ impl Gen for syntax::Apply {
             return;
         }
 
-        self.func.gen(builder);
+        func.gen(builder);
         builder.push(Inst::Call);
 
         builder.push_label(label);
@@ -554,21 +601,14 @@ impl Gen for syntax::SExp {
 
 impl Gen for syntax::Pair {
     fn gen(&self, builder: &mut Builder) {
-        for (i, exp) in self.exps.iter().enumerate() {
-            if i == self.exps.len() - 1 {
-                exp.gen(builder);
-
-                if let Some(last) = &self.last {
-                    last.gen(builder);
-                } else {
-                    builder.push(Inst::Push(Obj::Null));
-                }
-            } else {
-                exp.gen(builder);
-            }
+        if let Some(last) = &self.last {
+            last.gen(builder);
+        } else {
+            builder.push(Inst::Push(Obj::Null));
         }
 
-        for _ in 0..self.exps.len() {
+        for exp in self.exps.iter().rev() {
+            exp.gen(builder);
             builder.push(Inst::Cons);
         }
     }

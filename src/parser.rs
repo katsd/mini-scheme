@@ -124,6 +124,7 @@ impl Parse for DefFunc {
         }
 
         let varg = if ctx.peek(0)?.kind == TokenKind::Period {
+            ensure_symbol!(ctx, TokenKind::Period, ".");
             Some(Parse::parse(ctx)?)
         } else {
             None
@@ -581,7 +582,7 @@ impl Parse for Arg {
         if ctx.peek(0)?.kind == TokenKind::ParenOpen {
             Ok(Self::Args(Parse::parse(ctx)?))
         } else {
-            Ok(Self::Id(Parse::parse(ctx)?))
+            Ok(Self::VArg(Parse::parse(ctx)?))
         }
     }
 }
@@ -599,6 +600,7 @@ impl Parse for Args {
         }
 
         let varg = if ctx.peek(0)?.kind == TokenKind::Period {
+            ensure_symbol!(ctx, TokenKind::Period, ".");
             Some(Parse::parse(ctx)?)
         } else {
             None

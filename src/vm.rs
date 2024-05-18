@@ -16,6 +16,7 @@ pub enum Inst {
     Set(Id),
     Get(Id),
     Def(Id),
+    CollectVArg(Id),
     Jump(u32),
     JumpIf(u32),
     Call,
@@ -25,7 +26,6 @@ pub enum Inst {
     Exit,
 
     Display,
-    Newline,
 
     Add, // +
     Sub, // -
@@ -46,6 +46,24 @@ pub enum Inst {
     Cdr,
     SetCar,
     SetCdr,
+    ExpandList,
+
+    IsNull,
+    IsPair,
+    IsNumber,
+    IsBool,
+    IsString,
+    IsProc,
+    IsSymbol,
+
+    IsEq,
+    IsEqual,
+
+    SymToStr,
+    StrToSym,
+    StrToNum,
+    NumToStr,
+    StringAppend,
 }
 
 pub fn exec(insts: Vec<Inst>) {
@@ -98,8 +116,6 @@ pub fn exec(insts: Vec<Inst>) {
     loop {
         let inst = &insts[pc as usize];
 
-        //println!("# {}", pc);
-
         match inst {
             Inst::Push(obj) => {
                 push!(obj.clone());
@@ -114,6 +130,28 @@ pub fn exec(insts: Vec<Inst>) {
                     .expect(&format!("{} is not defined", id.0));
 
                 update_ref_cnt(&prev, &mut frame_stack, false);
+            }
+            Inst::CollectVArg(id) => {
+                let mut args = vec![];
+
+                loop {
+                    let v = pop_retaining_ref!();
+
+                    if let Obj::Context { pc: _, fp: _ } = v {
+                        push_retaining_ref!(v);
+                        break;
+                    }
+
+                    args.push(v);
+                }
+
+                let mut list = Obj::Null;
+
+                for arg in args.into_iter().rev() {
+                    list = Obj::Pair(Arc::new(Mutex::new(Box::new((arg, list)))))
+                }
+
+                push_retaining_ref!(list);
             }
             Inst::Get(id) => {
                 let v = find_var(&id, &fp, &mut frame_stack, |obj| obj.clone())
@@ -208,10 +246,6 @@ pub fn exec(insts: Vec<Inst>) {
                 print!("{}", v);
                 push!(Obj::Null);
             }
-            Inst::Newline => {
-                println!();
-                push!(Obj::Null);
-            }
             Inst::Add
             | Inst::Sub
             | Inst::Mul
@@ -221,8 +255,8 @@ pub fn exec(insts: Vec<Inst>) {
             | Inst::Le
             | Inst::Gt
             | Inst::Ge => {
-                let r = pop!().number();
                 let l = pop!().number();
+                let r = pop!().number();
 
                 let obj = if let (Number::Int(l), Number::Int(r)) = (l, r) {
                     match &inst {
@@ -267,8 +301,8 @@ pub fn exec(insts: Vec<Inst>) {
                 push!(Obj::Bool(!pop!().bool()));
             }
             Inst::Cons => {
-                let r = pop_retaining_ref!();
                 let l = pop_retaining_ref!();
+                let r = pop_retaining_ref!();
 
                 let v = Obj::Pair(Arc::new(Mutex::new(Box::new((l, r)))));
                 push_retaining_ref!(v);
@@ -300,11 +334,10 @@ pub fn exec(insts: Vec<Inst>) {
                 push_retaining_ref!(r.clone());
             }
             Inst::SetCar => {
+                let v = pop_retaining_ref!();
                 let l = pop_retaining_ref!();
 
-                let Obj::Pair(v) = pop_retaining_ref!() else {
-                    panic!("Not Pair")
-                };
+                let Obj::Pair(v) = v else { panic!("Not Pair") };
 
                 let mut v = v.lock().unwrap();
 
@@ -313,17 +346,107 @@ pub fn exec(insts: Vec<Inst>) {
                 update_ref_cnt(&l, &mut frame_stack, false);
             }
             Inst::SetCdr => {
+                let v = pop_retaining_ref!();
                 let r = pop_retaining_ref!();
 
-                let Obj::Pair(v) = pop_retaining_ref!() else {
-                    panic!("Not Pair")
-                };
+                let Obj::Pair(v) = v else { panic!("Not Pair") };
 
                 let mut v = v.lock().unwrap();
 
                 let r = std::mem::replace(&mut v.1, r);
 
                 update_ref_cnt(&r, &mut frame_stack, false);
+            }
+            Inst::ExpandList => {
+                let v = pop_retaining_ref!();
+
+                for e in v.list_elems().into_iter().rev() {
+                    push!(e);
+                }
+            }
+            Inst::IsNull => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Null => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsPair => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Pair(_) => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsNumber => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Number(_) => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsBool => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Bool(_) => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsString => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::String(_) => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsProc => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Closure { addr: _, fp: _ } => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsSymbol => {
+                push!(Obj::Bool(match pop!() {
+                    Obj::Id(_) => true,
+                    _ => false,
+                }));
+            }
+            Inst::IsEq => {
+                let l = pop!();
+                let r = pop!();
+
+                push!(Obj::Bool(match (&l, &r) {
+                    (Obj::Pair(l), Obj::Pair(r)) => {
+                        Arc::ptr_eq(l, r)
+                    }
+                    _ => l == r,
+                }));
+            }
+            Inst::IsEqual => {
+                push!(Obj::Bool(pop!() == pop!()))
+            }
+            Inst::SymToStr => {
+                let v = pop!().id();
+                push!(Obj::String(v.0));
+            }
+            Inst::StrToSym => {
+                let v = pop!().string();
+                push!(Obj::Id(Id(v)));
+            }
+            Inst::StrToNum => {
+                let v = pop!().string();
+                if let Ok(n) = v.parse::<i64>() {
+                    push!(Obj::Number(Number::Int(n)));
+                } else if let Ok(n) = v.parse::<f64>() {
+                    push!(Obj::Number(Number::Float(n)));
+                } else {
+                    push!(Obj::Number(Number::Int(0)));
+                }
+            }
+            Inst::NumToStr => {
+                let v = pop!().number();
+                push!(Obj::String(format!("{}", v)));
+            }
+            Inst::StringAppend => {
+                let l = pop!().string();
+                let r = pop!().string();
+
+                push!(Obj::String(format!("{}{}", l, r)));
             }
         }
 

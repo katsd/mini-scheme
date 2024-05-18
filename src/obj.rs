@@ -13,6 +13,38 @@ pub enum Obj {
     Null,
 }
 
+impl PartialEq for Obj {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Bool(l), Self::Bool(r)) => l == r,
+            (Self::Number(l), Self::Number(r)) => l == r,
+            (Self::String(l), Self::String(r)) => l == r,
+            (Self::Id(l), Self::Id(r)) => l.0 == r.0,
+            (
+                Self::Closure {
+                    addr: addr_l,
+                    fp: fp_l,
+                },
+                Self::Closure {
+                    addr: addr_r,
+                    fp: fp_r,
+                },
+            ) => addr_l == addr_r && fp_l == fp_r,
+            (Self::Context { pc: pc_l, fp: fp_l }, Self::Context { pc: pc_r, fp: fp_r }) => {
+                pc_l == pc_r && fp_l == fp_r
+            }
+            (Self::Null, Self::Null) => true,
+            (Self::Pair(l), Self::Pair(r)) => {
+                let l = l.lock().unwrap();
+                let r = r.lock().unwrap();
+
+                l.0 == r.0 && l.1 == r.1
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Display for Obj {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -72,12 +104,35 @@ impl Obj {
 
         n
     }
+
+    pub fn list_elems(self) -> Vec<Obj> {
+        match self {
+            Obj::Null => vec![],
+            Obj::Pair(p) => {
+                let p = p.lock().unwrap();
+
+                vec![vec![p.0.clone()], p.1.clone().list_elems()].into_iter().flatten().collect()
+            }
+            _ => panic!("Not List"),
+        }
+    }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub enum Number {
     Int(i64),
     Float(f64),
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Int(l), Self::Int(r)) => l == r,
+            (Self::Int(l), Self::Float(r)) => *l as f64 == *r,
+            (Self::Float(l), Self::Int(r)) => *l == *r as f64,
+            (Self::Float(l), Self::Float(r)) => l == r,
+        }
+    }
 }
 
 impl From<i64> for Number {

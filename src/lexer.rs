@@ -153,7 +153,10 @@ fn read_next_string(reader: &mut reader::Reader) -> Option<String> {
 
         if c == '\\' {
             let c = reader.read()?;
-            str.push(c);
+            str.push(match c {
+                'n' => '\n',
+                _ => c,
+            });
             continue;
         }
 

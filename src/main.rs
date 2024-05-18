@@ -14,12 +14,16 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let src = if args.len() < 2 {
-        "test/yay.ss"
+        "test/yay.scm"
     } else {
         &args[1]
     };
 
-    let src = read_to_string(src).expect("Failed to open file");
+    let src = vec![
+        include_str!("std.scm"),
+        &read_to_string(src).expect("Failed to open file"),
+    ]
+    .concat();
 
     let tokens = get_tokens(src);
 

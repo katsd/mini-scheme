@@ -175,7 +175,7 @@ pub struct Body {
 
 #[derive(Debug, Clone)]
 pub enum Arg {
-    Id(Id),
+    VArg(Id),
     Args(Args),
 }
 
