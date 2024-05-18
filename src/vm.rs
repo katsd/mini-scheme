@@ -218,11 +218,25 @@ pub fn exec(insts: Vec<Inst>) {
                     panic!("Not closure")
                 };
 
-                frame_stack[fp as usize] = Some(Frame {
-                    parent: Some(fp_parent),
-                    table: Default::default(),
-                    ref_cnt: 1,
-                });
+                if frame_stack[fp as usize].as_ref().unwrap().ref_cnt > 1 {
+                    let new_frame = Frame {
+                        parent: Some(fp_parent),
+                        table: Default::default(),
+                        ref_cnt: 1,
+                    };
+
+                    while frame_stack[fp as usize].is_some() {
+                        fp += 1;
+                    }
+
+                    frame_stack[fp as usize] = Some(new_frame);
+                } else {
+                    frame_stack[fp as usize] = Some(Frame {
+                        parent: Some(fp_parent),
+                        table: Default::default(),
+                        ref_cnt: 1,
+                    });
+                }
 
                 pc = addr;
 
