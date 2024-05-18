@@ -14,6 +14,7 @@ pub struct Frame {
 pub enum Inst {
     Push(Obj),
     Pop,
+    Dup,
     Set(Id),
     Get(Id),
     Def(Id),
@@ -21,6 +22,7 @@ pub enum Inst {
     Jump(u32),
     JumpIf(u32),
     Call,
+    OptCall,
     Ret,
     PushReturnContext(u32),
     CreateClosure(u32),
@@ -127,6 +129,11 @@ pub fn exec(insts: Vec<Inst>) {
             Inst::Pop => {
                 pop!();
             }
+            Inst::Dup => {
+                let v = pop_retaining_ref!();
+                push!(v.clone());
+                push_retaining_ref!(v);
+            }
             Inst::Set(id) => {
                 let v = pop_retaining_ref!();
 
@@ -172,7 +179,7 @@ pub fn exec(insts: Vec<Inst>) {
                 continue;
             }
             Inst::JumpIf(pc_next) => {
-                if pop!().bool() {
+                if pop!() != Obj::Bool(false) {
                     pc = *pc_next;
                     continue;
                 };
@@ -197,6 +204,25 @@ pub fn exec(insts: Vec<Inst>) {
                 }
 
                 frame_stack[fp as usize] = Some(new_frame);
+
+                pc = addr;
+
+                continue;
+            }
+            Inst::OptCall => {
+                let Obj::Closure {
+                    addr,
+                    fp: fp_parent,
+                } = pop_retaining_ref!()
+                else {
+                    panic!("Not closure")
+                };
+
+                frame_stack[fp as usize] = Some(Frame {
+                    parent: Some(fp_parent),
+                    table: Default::default(),
+                    ref_cnt: 1,
+                });
 
                 pc = addr;
 
@@ -319,7 +345,7 @@ pub fn exec(insts: Vec<Inst>) {
                 push!(Obj::Bool(pop!().bool() || pop!().bool()));
             }
             Inst::Not => {
-                push!(Obj::Bool(!pop!().bool()));
+                push!(Obj::Bool(pop!() == Obj::Bool(false)));
             }
             Inst::Cons => {
                 let l = pop_retaining_ref!();

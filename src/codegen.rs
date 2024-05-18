@@ -7,7 +7,7 @@ pub fn generate(ast: &syntax::AST, is_main: bool) -> Vec<Inst> {
     let mut builder = Builder::new();
 
     for t in &ast.body {
-        t.gen(&mut builder);
+        t.gen(&mut builder, false);
     }
 
     if is_main {
@@ -40,46 +40,46 @@ pub fn join(l: Vec<Inst>, r: Vec<Inst>) -> Vec<Inst> {
 }
 
 trait Gen {
-    fn gen(&self, builder: &mut Builder);
+    fn gen(&self, builder: &mut Builder, is_tail: bool);
 }
 
 impl Gen for syntax::Toplevel {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match &self {
-            syntax::Toplevel::Exp(t) => t.gen(builder),
-            syntax::Toplevel::Define(t) => t.gen(builder),
-            syntax::Toplevel::Load(t) => t.gen(builder),
+            syntax::Toplevel::Exp(t) => t.gen(builder, false),
+            syntax::Toplevel::Define(t) => t.gen(builder, false),
+            syntax::Toplevel::Load(t) => t.gen(builder, false),
         }
     }
 }
 
 impl Gen for syntax::Load {
-    fn gen(&self, builder: &mut Builder) {
-        self.src.gen(builder);
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        self.src.gen(builder, false);
         builder.push(Inst::Load);
     }
 }
 
 impl Gen for syntax::Define {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match self {
-            Self::Var(t) => t.gen(builder),
-            Self::Func(t) => t.gen(builder),
+            Self::Var(t) => t.gen(builder, false),
+            Self::Func(t) => t.gen(builder, false),
         }
     }
 }
 
 impl Gen for syntax::DefVar {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Def(Id(self.id.v.clone())));
-        self.exp.gen(builder);
+        self.exp.gen(builder, false);
         builder.push(Inst::Set(Id(self.id.v.clone())));
         builder.push(Inst::Push(Obj::Null));
     }
 }
 
 impl Gen for syntax::DefFunc {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let lambda = syntax::Lambda {
             meta: self.meta.clone(),
             arg: syntax::Arg::Args(syntax::Args {
@@ -96,35 +96,35 @@ impl Gen for syntax::DefFunc {
             exp: syntax::Exp::Lambda(Box::new(lambda)),
         };
 
-        set.gen(builder);
+        set.gen(builder, false);
         builder.push(Inst::Push(Obj::Null));
     }
 }
 
 impl Gen for syntax::Exp {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match self {
-            Self::Const(t) => t.gen(builder),
-            Self::Id(t) => t.gen(builder),
-            Self::Lambda(t) => t.gen(builder),
-            Self::Apply(t) => t.gen(builder),
-            Self::Quote(t) => t.gen(builder),
-            Self::Set(t) => t.gen(builder),
-            Self::Let(t) => t.gen(builder),
-            Self::LetAster(t) => t.gen(builder),
-            Self::LetRec(t) => t.gen(builder),
-            Self::If(t) => t.gen(builder),
-            Self::Cond(t) => t.gen(builder),
-            Self::And(t) => t.gen(builder),
-            Self::Or(t) => t.gen(builder),
-            Self::Begin(t) => t.gen(builder),
-            Self::Do(t) => t.gen(builder),
+            Self::Const(t) => t.gen(builder, is_tail),
+            Self::Id(t) => t.gen(builder, is_tail),
+            Self::Lambda(t) => t.gen(builder, is_tail),
+            Self::Apply(t) => t.gen(builder, is_tail),
+            Self::Quote(t) => t.gen(builder, is_tail),
+            Self::Set(t) => t.gen(builder, is_tail),
+            Self::Let(t) => t.gen(builder, is_tail),
+            Self::LetAster(t) => t.gen(builder, is_tail),
+            Self::LetRec(t) => t.gen(builder, is_tail),
+            Self::If(t) => t.gen(builder, is_tail),
+            Self::Cond(t) => t.gen(builder, is_tail),
+            Self::And(t) => t.gen(builder, is_tail),
+            Self::Or(t) => t.gen(builder, is_tail),
+            Self::Begin(t) => t.gen(builder, is_tail),
+            Self::Do(t) => t.gen(builder, is_tail),
         }
     }
 }
 
 impl Gen for syntax::Lambda {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let lambda_id = builder.get_label();
         let label = builder.get_label();
 
@@ -155,7 +155,7 @@ impl Gen for syntax::Lambda {
             }
         }
 
-        self.body.gen(builder);
+        self.body.gen(builder, true);
 
         builder.push(Inst::Ret);
 
@@ -164,7 +164,7 @@ impl Gen for syntax::Lambda {
 }
 
 impl Gen for syntax::Apply {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let is_apply = if let syntax::Exp::Id(id) = &self.func {
             id.v.as_str() == "apply"
         } else {
@@ -217,7 +217,7 @@ impl Gen for syntax::Apply {
 
         let label = builder.get_label();
 
-        if builtin_inst.is_none() {
+        if !is_tail && builtin_inst.is_none() {
             builder.push_temp(TempInst::PushReturnContext(label));
         }
 
@@ -227,7 +227,7 @@ impl Gen for syntax::Apply {
                     break;
                 }
 
-                exp.gen(builder);
+                exp.gen(builder, false);
 
                 if i == self.exps.len() - 1 {
                     builder.push(Inst::ExpandList);
@@ -235,7 +235,7 @@ impl Gen for syntax::Apply {
             }
         } else {
             for exp in self.exps.iter().rev() {
-                exp.gen(builder);
+                exp.gen(builder, false);
             }
         }
 
@@ -244,29 +244,30 @@ impl Gen for syntax::Apply {
             return;
         }
 
-        func.gen(builder);
-        builder.push(Inst::Call);
+        func.gen(builder, false);
+
+        builder.push(if is_tail { Inst::OptCall } else { Inst::Call });
 
         builder.push_label(label);
     }
 }
 
 impl Gen for syntax::Quote {
-    fn gen(&self, builder: &mut Builder) {
-        self.s_exp.gen(builder);
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        self.s_exp.gen(builder, false);
     }
 }
 
 impl Gen for syntax::Set {
-    fn gen(&self, builder: &mut Builder) {
-        self.exp.gen(builder);
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        self.exp.gen(builder, false);
         builder.push(Inst::Set(Id(self.id.v.clone())));
         builder.push(Inst::Push(Obj::Null));
     }
 }
 
 impl Gen for syntax::Let {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let arg = syntax::Arg::Args(syntax::Args {
             meta: self.meta.clone(),
             args: self.bindings.bindings.iter().map(|b| b.id.clone()).collect(),
@@ -312,12 +313,12 @@ impl Gen for syntax::Let {
             exps: self.bindings.bindings.iter().map(|b| b.exp.clone()).collect(),
         };
 
-        apply.gen(builder);
+        apply.gen(builder, false);
     }
 }
 
 impl Gen for syntax::LetAster {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let mut t = syntax::Let {
             meta: self.meta.clone(),
             id: None,
@@ -344,12 +345,12 @@ impl Gen for syntax::LetAster {
             };
         }
 
-        t.gen(builder);
+        t.gen(builder, false);
     }
 }
 
 impl Gen for syntax::LetRec {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let bindings = self
             .bindings
             .bindings
@@ -389,27 +390,27 @@ impl Gen for syntax::LetRec {
                 exps,
             },
         }
-        .gen(builder);
+        .gen(builder, false);
     }
 }
 
 impl Gen for syntax::If {
-    fn gen(&self, builder: &mut Builder) {
-        self.cond.gen(builder);
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        self.cond.gen(builder, false);
         builder.push(Inst::Not);
 
         let label_else = builder.get_label();
 
         builder.push_temp(TempInst::JumpIf(label_else));
 
-        self.then.gen(builder);
+        self.then.gen(builder, is_tail);
 
         let label_exit = builder.get_label();
         builder.push_temp(TempInst::Jump(label_exit));
         builder.push_label(label_else);
 
         if let Some(el) = &self.el {
-            el.gen(builder);
+            el.gen(builder, is_tail);
         } else {
             builder.push(Inst::Push(Obj::Null));
         }
@@ -419,11 +420,11 @@ impl Gen for syntax::If {
 }
 
 impl Gen for syntax::Cond {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let label_exit = builder.get_label();
 
         for m in &self.matches {
-            m.cond.gen(builder);
+            m.cond.gen(builder, false);
             builder.push(Inst::Not);
 
             let label = builder.get_label();
@@ -431,7 +432,7 @@ impl Gen for syntax::Cond {
             builder.push_temp(TempInst::JumpIf(label));
 
             for (i, exp) in m.then.get().iter().enumerate() {
-                exp.gen(builder);
+                exp.gen(builder, is_tail);
 
                 if i < m.then.len() - 1 {
                     builder.push(Inst::Pop);
@@ -444,7 +445,7 @@ impl Gen for syntax::Cond {
 
         if let Some(el) = &self.el {
             for (i, exp) in el.get().iter().enumerate() {
-                exp.gen(builder);
+                exp.gen(builder, is_tail);
 
                 if i < el.len() - 1 {
                     builder.push(Inst::Pop);
@@ -459,52 +460,54 @@ impl Gen for syntax::Cond {
 }
 
 impl Gen for syntax::And {
-    fn gen(&self, builder: &mut Builder) {
-        let label_false = builder.get_label();
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let label_exit = builder.get_label();
 
-        for exp in &self.exps {
-            exp.gen(builder);
+        for (i, exp) in self.exps.iter().enumerate() {
+            if i == self.exps.len() - 1 {
+                exp.gen(builder, is_tail);
+                continue;
+            }
+
+            exp.gen(builder, false);
+            builder.push(Inst::Dup);
             builder.push(Inst::Not);
-            builder.push_temp(TempInst::JumpIf(label_false));
+            builder.push_temp(TempInst::JumpIf(label_exit));
+            builder.push(Inst::Pop);
         }
-
-        builder.push(Inst::Push(Obj::Bool(true)));
-        builder.push_temp(TempInst::Jump(label_exit));
-
-        builder.push_label(label_false);
-        builder.push(Inst::Push(Obj::Bool(false)));
 
         builder.push_label(label_exit);
     }
 }
 
 impl Gen for syntax::Or {
-    fn gen(&self, builder: &mut Builder) {
-        let label_true = builder.get_label();
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let label_exit = builder.get_label();
 
-        for exp in &self.exps {
-            exp.gen(builder);
-            builder.push_temp(TempInst::JumpIf(label_true));
+        for (i, exp) in self.exps.iter().enumerate() {
+            if i == self.exps.len() - 1 {
+                exp.gen(builder, is_tail);
+                continue;
+            }
+
+            exp.gen(builder, false);
+            builder.push(Inst::Dup);
+            builder.push_temp(TempInst::JumpIf(label_exit));
+            builder.push(Inst::Pop);
         }
-
-        builder.push(Inst::Push(Obj::Bool(false)));
-        builder.push_temp(TempInst::Jump(label_exit));
-
-        builder.push_label(label_true);
-        builder.push(Inst::Push(Obj::Bool(true)));
 
         builder.push_label(label_exit);
     }
 }
 
 impl Gen for syntax::Begin {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         for (i, exp) in self.exps.iter().enumerate() {
-            exp.gen(builder);
+            let is_last = i == self.exps.len() - 1;
 
-            if i < self.exps.len() - 1 {
+            exp.gen(builder, is_tail && is_last);
+
+            if !is_last {
                 builder.push(Inst::Pop);
             }
         }
@@ -512,7 +515,7 @@ impl Gen for syntax::Begin {
 }
 
 impl Gen for syntax::Do {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         let label_start = builder.get_label();
         let label_exit = builder.get_label();
         let lambda_id = builder.get_label();
@@ -530,18 +533,18 @@ impl Gen for syntax::Do {
                 id: b.id.clone(),
                 exp: b.i.clone(),
             }
-            .gen(builder);
+            .gen(builder, false);
             builder.push(Inst::Pop);
         }
 
         builder.push_label(label_start);
 
-        self.cond.gen(builder);
+        self.cond.gen(builder, false);
 
         let label_ret = builder.get_label();
         builder.push_temp(TempInst::JumpIf(label_ret));
 
-        self.body.gen(builder);
+        self.body.gen(builder, false);
         builder.push(Inst::Pop);
 
         for b in &self.bindings {
@@ -550,7 +553,7 @@ impl Gen for syntax::Do {
                 id: b.id.clone(),
                 exp: b.u.clone(),
             }
-            .gen(builder);
+            .gen(builder, false);
             builder.push(Inst::Pop);
         }
 
@@ -559,7 +562,7 @@ impl Gen for syntax::Do {
         builder.push_label(label_ret);
 
         for (i, v) in self.value.iter().enumerate() {
-            v.gen(builder);
+            v.gen(builder, false);
 
             if i < self.value.len() - 1 {
                 builder.push(Inst::Pop);
@@ -575,15 +578,18 @@ impl Gen for syntax::Do {
 }
 
 impl Gen for syntax::Body {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         for def in &self.defs {
-            def.gen(builder);
+            def.gen(builder, false);
             builder.push(Inst::Pop);
         }
 
         for (i, exp) in self.exps.get().iter().enumerate() {
-            exp.gen(builder);
-            if i < self.exps.len() - 1 {
+            let is_last = i == self.exps.len() - 1;
+
+            exp.gen(builder, is_tail && is_last);
+
+            if !is_last {
                 builder.push(Inst::Pop);
             }
         }
@@ -591,91 +597,91 @@ impl Gen for syntax::Body {
 }
 
 impl Gen for syntax::Arg {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         todo!()
     }
 }
 
 impl Gen for syntax::Args {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         todo!()
     }
 }
 
 impl Gen for syntax::Bindings {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         todo!()
     }
 }
 
 impl Gen for syntax::Binding {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         todo!()
     }
 }
 
 impl Gen for syntax::SExp {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match self {
-            Self::Const(t) => t.gen(builder),
+            Self::Const(t) => t.gen(builder, false),
             Self::Id(t) => builder.push(Inst::Push(Obj::Id(Id(t.v.clone())))),
-            Self::Pair(t) => t.gen(builder),
+            Self::Pair(t) => t.gen(builder, false),
         }
     }
 }
 
 impl Gen for syntax::Pair {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         if let Some(last) = &self.last {
-            last.gen(builder);
+            last.gen(builder, false);
         } else {
             builder.push(Inst::Push(Obj::Null));
         }
 
         for exp in self.exps.iter().rev() {
-            exp.gen(builder);
+            exp.gen(builder, false);
             builder.push(Inst::Cons);
         }
     }
 }
 
 impl Gen for syntax::Const {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match self {
-            Self::Num(t) => t.gen(builder),
-            Self::Bool(t) => t.gen(builder),
-            Self::String(t) => t.gen(builder),
-            Self::Null(t) => t.gen(builder),
+            Self::Num(t) => t.gen(builder, false),
+            Self::Bool(t) => t.gen(builder, false),
+            Self::String(t) => t.gen(builder, false),
+            Self::Null(t) => t.gen(builder, false),
         }
     }
 }
 
 impl Gen for syntax::Bool {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Push(Obj::Bool(self.v)));
     }
 }
 
 impl Gen for syntax::Num {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Push(Obj::Number(self.v)));
     }
 }
 
 impl Gen for syntax::Str {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Push(Obj::String(self.v.clone())));
     }
 }
 
 impl Gen for syntax::Null {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Push(Obj::Null));
     }
 }
 
 impl Gen for syntax::Id {
-    fn gen(&self, builder: &mut Builder) {
+    fn gen(&self, builder: &mut Builder, is_tail: bool) {
         builder.push(Inst::Get(Id(self.v.clone())));
     }
 }
