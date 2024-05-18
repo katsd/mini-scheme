@@ -1,6 +1,9 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::read_to_string;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+
 use crate::obj::*;
 
 #[derive(Debug, Clone)]
@@ -70,448 +73,497 @@ pub enum Inst {
     StringAppend,
 }
 
-pub fn exec(insts: Vec<Inst>) {
-    let mut insts = insts;
+pub struct VM {
+    insts: Vec<Inst>,
+    pc: u32,
 
-    let mut pc: u32 = 0;
+    sp: u32,
+    stack: Vec<Obj>,
 
-    let mut sp = 0;
-    let mut stack = vec![Obj::Null; 1000];
+    fp: u32,
+    frame_stack: Vec<Option<Frame>>,
+}
 
-    let mut fp: u32 = 0;
-    let mut frame_stack = vec![Option::<Frame>::None; 1000];
-    frame_stack[0] = Some(Frame {
-        parent: None,
-        table: Default::default(),
-        ref_cnt: 1,
-    });
+impl VM {
+    pub fn new() -> Self {
+        let mut frame_stack = vec![Option::<Frame>::None; 1000];
+        frame_stack[0] = Some(Frame {
+            parent: None,
+            table: Default::default(),
+            ref_cnt: 1,
+        });
 
-    macro_rules! pop {
-        () => {{
-            let v = std::mem::replace(&mut stack[sp], Obj::Null);
-            update_ref_cnt(&v, &mut frame_stack, false);
-            sp -= 1;
-            v
-        }};
+        Self {
+            insts: vec![],
+            pc: 0,
+            sp: 0,
+            stack: vec![Obj::Null; 1000],
+            fp: 0,
+            frame_stack,
+        }
     }
 
-    macro_rules! push {
-        ($obj:expr) => {{
-            let v = $obj;
-            update_ref_cnt(&v, &mut frame_stack, true);
-            sp += 1;
-            stack[sp] = v;
-        }};
-    }
+    pub fn exec(&mut self, insts: Vec<Inst>, stopper: Option<&std::sync::mpsc::Receiver<()>>) -> Obj {
+        self.pc = self.insts.len() as u32;
+        self.insts = crate::codegen::join(self.insts.clone(), insts);
 
-    macro_rules! pop_retaining_ref {
-        () => {{
-            let v = std::mem::replace(&mut stack[sp], Obj::Null);
-            sp -= 1;
-            v
-        }};
-    }
+        macro_rules! pop {
+            () => {{
+                let v = std::mem::replace(&mut self.stack[self.sp as usize], Obj::Null);
+                update_ref_cnt(&v, &mut self.frame_stack, false);
+                self.sp -= 1;
+                v
+            }};
+        }
 
-    macro_rules! push_retaining_ref {
-        ($obj:expr) => {{
-            sp += 1;
-            stack[sp] = $obj;
-        }};
-    }
+        macro_rules! push {
+            ($obj:expr) => {{
+                let v = $obj;
+                update_ref_cnt(&v, &mut self.frame_stack, true);
+                self.sp += 1;
+                self.stack[self.sp as usize] = v;
+            }};
+        }
 
-    loop {
-        let inst = insts[pc as usize].clone();
+        macro_rules! pop_retaining_ref {
+            () => {{
+                let v = std::mem::replace(&mut self.stack[self.sp as usize], Obj::Null);
+                self.sp -= 1;
+                v
+            }};
+        }
 
-        match &inst {
-            Inst::Push(obj) => {
-                push!(obj.clone());
+        macro_rules! push_retaining_ref {
+            ($obj:expr) => {{
+                self.sp += 1;
+                self.stack[self.sp as usize] = $obj;
+            }};
+        }
+
+        loop {
+            if let Some(stopper) = stopper {
+                if let Ok(_) = stopper.try_recv() {
+                    return Obj::Null;
+                }
             }
-            Inst::Pop => {
-                pop!();
-            }
-            Inst::Dup => {
-                let v = pop_retaining_ref!();
-                push!(v.clone());
-                push_retaining_ref!(v);
-            }
-            Inst::Set(id) => {
-                let v = pop_retaining_ref!();
 
-                let prev = find_var(&id, &fp, &mut frame_stack, |obj| std::mem::replace(obj, v))
-                    .expect(&format!("{} is not defined", id.0));
+            let inst = self.insts[self.pc as usize].clone();
 
-                update_ref_cnt(&prev, &mut frame_stack, false);
-            }
-            Inst::CollectVArg(id) => {
-                let mut args = vec![];
-
-                loop {
+            match &inst {
+                Inst::Push(obj) => {
+                    push!(obj.clone());
+                }
+                Inst::Pop => {
+                    pop!();
+                }
+                Inst::Dup => {
+                    let v = pop_retaining_ref!();
+                    push!(v.clone());
+                    push_retaining_ref!(v);
+                }
+                Inst::Set(id) => {
                     let v = pop_retaining_ref!();
 
-                    if let Obj::Context { pc: _, fp: _ } = v {
-                        push_retaining_ref!(v);
-                        break;
-                    }
-
-                    args.push(v);
-                }
-
-                let mut list = Obj::Null;
-
-                for arg in args.into_iter().rev() {
-                    list = Obj::Pair(Arc::new(Mutex::new(Box::new((arg, list)))))
-                }
-
-                push_retaining_ref!(list);
-            }
-            Inst::Get(id) => {
-                let v = find_var(&id, &fp, &mut frame_stack, |obj| obj.clone())
+                    let prev = find_var(&id, &self.fp, &mut self.frame_stack, |obj| {
+                        std::mem::replace(obj, v)
+                    })
                     .expect(&format!("{} is not defined", id.0));
 
-                push!(v);
-            }
-            Inst::Def(id) => {
-                let frame = frame_stack[fp as usize].as_mut().unwrap();
-                frame.table.insert(id.clone(), Obj::Null);
-            }
-            Inst::Jump(pc_next) => {
-                pc = *pc_next;
-                continue;
-            }
-            Inst::JumpIf(pc_next) => {
-                if pop!() != Obj::Bool(false) {
-                    pc = *pc_next;
-                    continue;
-                };
-            }
-            Inst::Call => {
-                let Obj::Closure {
-                    addr,
-                    fp: fp_parent,
-                } = pop_retaining_ref!()
-                else {
-                    panic!("Not closure")
-                };
-
-                let new_frame = Frame {
-                    parent: Some(fp_parent),
-                    table: Default::default(),
-                    ref_cnt: 1,
-                };
-
-                while frame_stack[fp as usize].is_some() {
-                    fp += 1;
+                    update_ref_cnt(&prev, &mut self.frame_stack, false);
                 }
+                Inst::CollectVArg(id) => {
+                    let mut args = vec![];
 
-                frame_stack[fp as usize] = Some(new_frame);
+                    loop {
+                        let v = pop_retaining_ref!();
 
-                pc = addr;
+                        if let Obj::Context { pc: _, fp: _ } = v {
+                            push_retaining_ref!(v);
+                            break;
+                        }
 
-                continue;
-            }
-            Inst::OptCall => {
-                let Obj::Closure {
-                    addr,
-                    fp: fp_parent,
-                } = pop_retaining_ref!()
-                else {
-                    panic!("Not closure")
-                };
+                        args.push(v);
+                    }
 
-                if frame_stack[fp as usize].as_ref().unwrap().ref_cnt > 1 {
+                    let mut list = Obj::Null;
+
+                    for arg in args.into_iter().rev() {
+                        list = Obj::Pair(Rc::new(RefCell::new((arg, list))))
+                    }
+
+                    push_retaining_ref!(list);
+                }
+                Inst::Get(id) => {
+                    let v = find_var(&id, &self.fp, &mut self.frame_stack, |obj| obj.clone())
+                        .expect(&format!("{} is not defined", id.0));
+
+                    push!(v);
+                }
+                Inst::Def(id) => {
+                    let frame = self.frame_stack[self.fp as usize].as_mut().unwrap();
+                    frame.table.insert(id.clone(), Obj::Null);
+                }
+                Inst::Jump(pc_next) => {
+                    self.pc = *pc_next;
+                    continue;
+                }
+                Inst::JumpIf(pc_next) => {
+                    if pop!() != Obj::Bool(false) {
+                        self.pc = *pc_next;
+                        continue;
+                    };
+                }
+                Inst::Call => {
+                    let Obj::Closure {
+                        addr,
+                        fp: fp_parent,
+                    } = pop_retaining_ref!()
+                    else {
+                        panic!("Not closure")
+                    };
+
                     let new_frame = Frame {
                         parent: Some(fp_parent),
                         table: Default::default(),
                         ref_cnt: 1,
                     };
 
-                    while frame_stack[fp as usize].is_some() {
-                        fp += 1;
+                    while self.frame_stack[self.fp as usize].is_some() {
+                        self.fp += 1;
                     }
 
-                    frame_stack[fp as usize] = Some(new_frame);
-                } else {
-                    frame_stack[fp as usize] = Some(Frame {
-                        parent: Some(fp_parent),
-                        table: Default::default(),
-                        ref_cnt: 1,
-                    });
+                    self.frame_stack[self.fp as usize] = Some(new_frame);
+
+                    self.pc = addr;
+
+                    continue;
                 }
-
-                pc = addr;
-
-                continue;
-            }
-            Inst::Ret => {
-                for (_, obj) in
-                    frame_stack.get(fp as usize).unwrap().as_ref().unwrap().table.clone()
-                {
-                    update_ref_cnt(&obj, &mut frame_stack, false);
-                }
-
-                let v = pop_retaining_ref!();
-
-                loop {
-                    let v = pop!();
-
-                    let Obj::Context {
-                        pc: pc_prev,
-                        fp: fp_prev,
-                    } = v
+                Inst::OptCall => {
+                    let Obj::Closure {
+                        addr,
+                        fp: fp_parent,
+                    } = pop_retaining_ref!()
                     else {
-                        continue;
+                        panic!("Not closure")
                     };
 
-                    update_ref_cnt(&Obj::Closure { addr: 0, fp }, &mut frame_stack, false);
+                    if self.frame_stack[self.fp as usize].as_ref().unwrap().ref_cnt > 1 {
+                        let new_frame = Frame {
+                            parent: Some(fp_parent),
+                            table: Default::default(),
+                            ref_cnt: 1,
+                        };
 
-                    pc = pc_prev;
-                    fp = fp_prev;
+                        while self.frame_stack[self.fp as usize].is_some() {
+                            self.fp += 1;
+                        }
 
-                    break;
-                }
-
-                push_retaining_ref!(v);
-
-                continue;
-            }
-            Inst::Load => {
-                let src = pop!().string();
-                let src = read_to_string(&src).expect(&format!("Failed to open {}", src));
-
-                let tokens = crate::lexer::get_tokens(src);
-                let ast = crate::parser::parse(tokens).expect("Failed to parse");
-
-                let next_pc = insts.len() as u32;
-
-                insts = crate::codegen::join(insts, crate::codegen::generate(&ast, false));
-
-                insts.push(Inst::Jump(pc + 1));
-
-                pc = next_pc;
-
-                continue;
-            }
-            Inst::Exit => {
-                return;
-            }
-            Inst::PushReturnContext(pc) => {
-                push!(Obj::Context { pc: *pc, fp });
-            }
-            Inst::CreateClosure(pc) => {
-                let v = Obj::Closure { addr: *pc, fp };
-                push!(v);
-            }
-            Inst::Display => {
-                let v = pop!();
-
-                print!("{}", v);
-                push!(Obj::Null);
-            }
-            Inst::Add
-            | Inst::Sub
-            | Inst::Mul
-            | Inst::Div
-            | Inst::Eq
-            | Inst::Lt
-            | Inst::Le
-            | Inst::Gt
-            | Inst::Ge => {
-                let l = pop!().number();
-                let r = pop!().number();
-
-                let obj = if let (Number::Int(l), Number::Int(r)) = (l, r) {
-                    match &inst {
-                        Inst::Add => Obj::Number(Number::Int(l + r)),
-                        Inst::Sub => Obj::Number(Number::Int(l - r)),
-                        Inst::Mul => Obj::Number(Number::Int(l * r)),
-                        Inst::Div => Obj::Number(Number::Int(l / r)),
-                        Inst::Eq => Obj::Bool(l == r),
-                        Inst::Lt => Obj::Bool(l < r),
-                        Inst::Le => Obj::Bool(l <= r),
-                        Inst::Gt => Obj::Bool(l > r),
-                        Inst::Ge => Obj::Bool(l >= r),
-                        _ => unreachable!(),
+                        self.frame_stack[self.fp as usize] = Some(new_frame);
+                    } else {
+                        self.frame_stack[self.fp as usize] = Some(Frame {
+                            parent: Some(fp_parent),
+                            table: Default::default(),
+                            ref_cnt: 1,
+                        });
                     }
-                } else {
-                    let l = l.float();
-                    let r = r.float();
 
-                    match &inst {
-                        Inst::Add => Obj::Number(Number::Float(l + r)),
-                        Inst::Sub => Obj::Number(Number::Float(l - r)),
-                        Inst::Mul => Obj::Number(Number::Float(l * r)),
-                        Inst::Div => Obj::Number(Number::Float(l / r)),
-                        Inst::Eq => Obj::Bool(l == r),
-                        Inst::Lt => Obj::Bool(l < r),
-                        Inst::Le => Obj::Bool(l <= r),
-                        Inst::Gt => Obj::Bool(l > r),
-                        Inst::Ge => Obj::Bool(l >= r),
-                        _ => unreachable!(),
+                    self.pc = addr;
+
+                    continue;
+                }
+                Inst::Ret => {
+                    for (_, obj) in self
+                        .frame_stack
+                        .get(self.fp as usize)
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .table
+                        .clone()
+                    {
+                        update_ref_cnt(&obj, &mut self.frame_stack, false);
                     }
-                };
 
-                push!(obj);
-            }
-            Inst::And => {
-                push!(Obj::Bool(pop!().bool() && pop!().bool()));
-            }
-            Inst::Or => {
-                push!(Obj::Bool(pop!().bool() || pop!().bool()));
-            }
-            Inst::Not => {
-                push!(Obj::Bool(pop!() == Obj::Bool(false)));
-            }
-            Inst::Cons => {
-                let l = pop_retaining_ref!();
-                let r = pop_retaining_ref!();
+                    let v = pop_retaining_ref!();
 
-                let v = Obj::Pair(Arc::new(Mutex::new(Box::new((l, r)))));
-                push_retaining_ref!(v);
-            }
-            Inst::Car => {
-                let Obj::Pair(v) = pop_retaining_ref!() else {
-                    panic!("Not Pair")
-                };
+                    loop {
+                        let v = pop!();
 
-                let v = v.lock().unwrap();
+                        let Obj::Context {
+                            pc: pc_prev,
+                            fp: fp_prev,
+                        } = v
+                        else {
+                            continue;
+                        };
 
-                let l = &v.0;
-                let r = &v.1;
+                        update_ref_cnt(
+                            &Obj::Closure {
+                                addr: 0,
+                                fp: self.fp,
+                            },
+                            &mut self.frame_stack,
+                            false,
+                        );
 
-                update_ref_cnt(&r, &mut frame_stack, false);
-                push_retaining_ref!(l.clone());
-            }
-            Inst::Cdr => {
-                let Obj::Pair(v) = pop_retaining_ref!() else {
-                    panic!("Not Pair")
-                };
+                        self.pc = pc_prev;
+                        self.fp = fp_prev;
 
-                let v = v.lock().unwrap();
+                        break;
+                    }
 
-                let l = &v.0;
-                let r = &v.1;
+                    push_retaining_ref!(v);
 
-                update_ref_cnt(&l, &mut frame_stack, false);
-                push_retaining_ref!(r.clone());
-            }
-            Inst::SetCar => {
-                let v = pop_retaining_ref!();
-                let l = pop_retaining_ref!();
+                    continue;
+                }
+                Inst::Load => {
+                    let src = pop!().string();
+                    let src = read_to_string(&src).expect(&format!("Failed to open {}", src));
 
-                let Obj::Pair(v) = v else { panic!("Not Pair") };
+                    let tokens = crate::lexer::get_tokens(src);
+                    let ast = crate::parser::parse(tokens).expect("Failed to parse");
 
-                let mut v = v.lock().unwrap();
+                    let next_pc = self.insts.len() as u32;
 
-                let l = std::mem::replace(&mut v.0, l);
+                    self.insts = crate::codegen::join(
+                        self.insts.clone(),
+                        crate::codegen::generate(&ast, false),
+                    );
 
-                update_ref_cnt(&l, &mut frame_stack, false);
-            }
-            Inst::SetCdr => {
-                let v = pop_retaining_ref!();
-                let r = pop_retaining_ref!();
+                    self.insts.push(Inst::Jump(self.pc + 1));
 
-                let Obj::Pair(v) = v else { panic!("Not Pair") };
+                    self.pc = next_pc;
 
-                let mut v = v.lock().unwrap();
+                    continue;
+                }
+                Inst::Exit => {
+                    return pop!();
+                }
+                Inst::PushReturnContext(pc) => {
+                    push!(Obj::Context {
+                        pc: *pc,
+                        fp: self.fp
+                    });
+                }
+                Inst::CreateClosure(pc) => {
+                    let v = Obj::Closure {
+                        addr: *pc,
+                        fp: self.fp,
+                    };
+                    push!(v);
+                }
+                Inst::Display => {
+                    let v = pop!();
 
-                let r = std::mem::replace(&mut v.1, r);
+                    print!("{}", v);
+                    push!(Obj::Null);
+                }
+                Inst::Add
+                | Inst::Sub
+                | Inst::Mul
+                | Inst::Div
+                | Inst::Eq
+                | Inst::Lt
+                | Inst::Le
+                | Inst::Gt
+                | Inst::Ge => {
+                    let l = pop!().number();
+                    let r = pop!().number();
 
-                update_ref_cnt(&r, &mut frame_stack, false);
-            }
-            Inst::ExpandList => {
-                let v = pop_retaining_ref!();
+                    let obj = if let (Number::Int(l), Number::Int(r)) = (l, r) {
+                        match &inst {
+                            Inst::Add => Obj::Number(Number::Int(l + r)),
+                            Inst::Sub => Obj::Number(Number::Int(l - r)),
+                            Inst::Mul => Obj::Number(Number::Int(l * r)),
+                            Inst::Div => Obj::Number(Number::Int(l / r)),
+                            Inst::Eq => Obj::Bool(l == r),
+                            Inst::Lt => Obj::Bool(l < r),
+                            Inst::Le => Obj::Bool(l <= r),
+                            Inst::Gt => Obj::Bool(l > r),
+                            Inst::Ge => Obj::Bool(l >= r),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        let l = l.float();
+                        let r = r.float();
 
-                for e in v.list_elems().into_iter().rev() {
-                    push!(e);
+                        match &inst {
+                            Inst::Add => Obj::Number(Number::Float(l + r)),
+                            Inst::Sub => Obj::Number(Number::Float(l - r)),
+                            Inst::Mul => Obj::Number(Number::Float(l * r)),
+                            Inst::Div => Obj::Number(Number::Float(l / r)),
+                            Inst::Eq => Obj::Bool(l == r),
+                            Inst::Lt => Obj::Bool(l < r),
+                            Inst::Le => Obj::Bool(l <= r),
+                            Inst::Gt => Obj::Bool(l > r),
+                            Inst::Ge => Obj::Bool(l >= r),
+                            _ => unreachable!(),
+                        }
+                    };
+
+                    push!(obj);
+                }
+                Inst::And => {
+                    push!(Obj::Bool(pop!().bool() && pop!().bool()));
+                }
+                Inst::Or => {
+                    push!(Obj::Bool(pop!().bool() || pop!().bool()));
+                }
+                Inst::Not => {
+                    push!(Obj::Bool(pop!() == Obj::Bool(false)));
+                }
+                Inst::Cons => {
+                    let l = pop_retaining_ref!();
+                    let r = pop_retaining_ref!();
+
+                    let v = Obj::Pair(Rc::new(RefCell::new((l, r))));
+                    push_retaining_ref!(v);
+                }
+                Inst::Car => {
+                    let Obj::Pair(v) = pop_retaining_ref!() else {
+                        panic!("Not Pair")
+                    };
+
+                    let v = v.borrow();
+
+                    let l = &v.0;
+                    let r = &v.1;
+
+                    update_ref_cnt(&r, &mut self.frame_stack, false);
+                    push_retaining_ref!(l.clone());
+                }
+                Inst::Cdr => {
+                    let Obj::Pair(v) = pop_retaining_ref!() else {
+                        panic!("Not Pair")
+                    };
+
+                    let v = v.borrow();
+
+                    let l = &v.0;
+                    let r = &v.1;
+
+                    update_ref_cnt(&l, &mut self.frame_stack, false);
+                    push_retaining_ref!(r.clone());
+                }
+                Inst::SetCar => {
+                    let v = pop_retaining_ref!();
+                    let l = pop_retaining_ref!();
+
+                    let Obj::Pair(v) = v else { panic!("Not Pair") };
+
+                    let mut v = v.borrow_mut();
+
+                    let l = std::mem::replace(&mut v.0, l);
+
+                    update_ref_cnt(&l, &mut self.frame_stack, false);
+                }
+                Inst::SetCdr => {
+                    let v = pop_retaining_ref!();
+                    let r = pop_retaining_ref!();
+
+                    let Obj::Pair(v) = v else { panic!("Not Pair") };
+
+                    let mut v = v.borrow_mut();
+
+                    let r = std::mem::replace(&mut v.1, r);
+
+                    update_ref_cnt(&r, &mut self.frame_stack, false);
+                }
+                Inst::ExpandList => {
+                    let v = pop_retaining_ref!();
+
+                    for e in v.list_elems().into_iter().rev() {
+                        push!(e);
+                    }
+                }
+                Inst::IsNull => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Null => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsPair => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Pair(_) => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsNumber => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Number(_) => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsBool => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Bool(_) => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsString => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::String(_) => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsProc => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Closure { addr: _, fp: _ } => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsSymbol => {
+                    push!(Obj::Bool(match pop!() {
+                        Obj::Id(_) => true,
+                        _ => false,
+                    }));
+                }
+                Inst::IsEq => {
+                    let l = pop!();
+                    let r = pop!();
+
+                    push!(Obj::Bool(match (&l, &r) {
+                        (Obj::Pair(l), Obj::Pair(r)) => {
+                            Rc::ptr_eq(l, r)
+                        }
+                        _ => l == r,
+                    }));
+                }
+                Inst::IsEqual => {
+                    push!(Obj::Bool(pop!() == pop!()))
+                }
+                Inst::SymToStr => {
+                    let v = pop!().id();
+                    push!(Obj::String(v.0));
+                }
+                Inst::StrToSym => {
+                    let v = pop!().string();
+                    push!(Obj::Id(Id(v)));
+                }
+                Inst::StrToNum => {
+                    let v = pop!().string();
+                    if let Ok(n) = v.parse::<i64>() {
+                        push!(Obj::Number(Number::Int(n)));
+                    } else if let Ok(n) = v.parse::<f64>() {
+                        push!(Obj::Number(Number::Float(n)));
+                    } else {
+                        push!(Obj::Number(Number::Int(0)));
+                    }
+                }
+                Inst::NumToStr => {
+                    let v = pop!().number();
+                    push!(Obj::String(format!("{}", v)));
+                }
+                Inst::StringAppend => {
+                    let l = pop!().string();
+                    let r = pop!().string();
+
+                    push!(Obj::String(format!("{}{}", l, r)));
                 }
             }
-            Inst::IsNull => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Null => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsPair => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Pair(_) => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsNumber => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Number(_) => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsBool => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Bool(_) => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsString => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::String(_) => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsProc => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Closure { addr: _, fp: _ } => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsSymbol => {
-                push!(Obj::Bool(match pop!() {
-                    Obj::Id(_) => true,
-                    _ => false,
-                }));
-            }
-            Inst::IsEq => {
-                let l = pop!();
-                let r = pop!();
 
-                push!(Obj::Bool(match (&l, &r) {
-                    (Obj::Pair(l), Obj::Pair(r)) => {
-                        Arc::ptr_eq(l, r)
-                    }
-                    _ => l == r,
-                }));
-            }
-            Inst::IsEqual => {
-                push!(Obj::Bool(pop!() == pop!()))
-            }
-            Inst::SymToStr => {
-                let v = pop!().id();
-                push!(Obj::String(v.0));
-            }
-            Inst::StrToSym => {
-                let v = pop!().string();
-                push!(Obj::Id(Id(v)));
-            }
-            Inst::StrToNum => {
-                let v = pop!().string();
-                if let Ok(n) = v.parse::<i64>() {
-                    push!(Obj::Number(Number::Int(n)));
-                } else if let Ok(n) = v.parse::<f64>() {
-                    push!(Obj::Number(Number::Float(n)));
-                } else {
-                    push!(Obj::Number(Number::Int(0)));
-                }
-            }
-            Inst::NumToStr => {
-                let v = pop!().number();
-                push!(Obj::String(format!("{}", v)));
-            }
-            Inst::StringAppend => {
-                let l = pop!().string();
-                let r = pop!().string();
-
-                push!(Obj::String(format!("{}{}", l, r)));
-            }
+            self.pc += 1;
         }
-
-        pc += 1;
     }
 }
 

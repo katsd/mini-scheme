@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+ctrlc = "3.4"
 macros = { path = "macros" }

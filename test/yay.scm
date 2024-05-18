@@ -5,4 +5,4 @@
 
 (display (even? 100))
 (newline)
-(display (even? 1000))
+(display (even? 100000))

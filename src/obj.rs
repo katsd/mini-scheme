@@ -1,5 +1,6 @@
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub enum Obj {
@@ -7,7 +8,7 @@ pub enum Obj {
     Number(Number),
     String(String),
     Id(Id),
-    Pair(Arc<Mutex<Box<(Obj, Obj)>>>),
+    Pair(Rc<RefCell<(Obj, Obj)>>),
     Closure { addr: u32, fp: u32 },
     Context { pc: u32, fp: u32 },
     Null,
@@ -35,8 +36,8 @@ impl PartialEq for Obj {
             }
             (Self::Null, Self::Null) => true,
             (Self::Pair(l), Self::Pair(r)) => {
-                let l = l.lock().unwrap();
-                let r = r.lock().unwrap();
+                let l = l.borrow();
+                let r = r.borrow();
 
                 l.0 == r.0 && l.1 == r.1
             }
@@ -53,7 +54,7 @@ impl Display for Obj {
             Obj::String(v) => write!(f, "{}", v),
             Obj::Id(v) => write!(f, "{}", v.0),
             Obj::Pair(v) => {
-                let v = v.lock().unwrap();
+                let v = v.borrow();
                 write!(f, "({})", display_pair(&v))
             }
             Obj::Closure { addr, fp } => write!(f, "closure({}, {})", addr, fp),
@@ -65,7 +66,7 @@ impl Display for Obj {
 
 fn display_pair(pair: &(Obj, Obj)) -> String {
     if let Obj::Pair(v) = &pair.1 {
-        format!("{} {}", pair.0, display_pair(&v.lock().unwrap()))
+        format!("{} {}", pair.0, display_pair(&v.borrow()))
     } else {
         match pair.1 {
             Obj::Null => format!("{}", pair.0),
@@ -109,7 +110,7 @@ impl Obj {
         match self {
             Obj::Null => vec![],
             Obj::Pair(p) => {
-                let p = p.lock().unwrap();
+                let p = p.borrow();
 
                 vec![vec![p.0.clone()], p.1.clone().list_elems()].into_iter().flatten().collect()
             }
