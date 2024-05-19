@@ -28,16 +28,29 @@ macro_rules! ensure_symbol {
     };
 }
 
-pub fn parse(tokens: Vec<Token>) -> Result<AST> {
-    let mut ctx = Context::new(tokens);
+pub struct Parser {
+    ctx: Context,
+}
 
-    let mut body = vec![];
-
-    while ctx.has_token() {
-        body.push(Parse::parse(&mut ctx)?);
+impl Parser {
+    pub fn new() -> Self {
+        Self {
+            ctx: Context::new(vec![]),
+        }
     }
 
-    Ok(AST { body })
+    pub fn parse(&mut self, src: String) -> Result<AST> {
+        let tokens = crate::lexer::get_tokens(src);
+        self.ctx.add(tokens);
+
+        let mut body = vec![];
+
+        while self.ctx.has_token() {
+            body.push(Parse::parse(&mut self.ctx)?);
+        }
+
+        Ok(AST { body })
+    }
 }
 
 trait Parse
@@ -68,8 +81,6 @@ impl Parse for Toplevel {
             TokenKind::ParenOpen => match ctx.peek(1)?.kind {
                 TokenKind::DefineSyntax => {
                     let syntax_def = DefineSyntax::parse(ctx)?;
-
-                    println!("{:?}", syntax_def);
 
                     ctx.add_syntax_def(syntax_def);
 
@@ -884,8 +895,6 @@ impl Exp {
 
         let expanded = ctx.expand_macro(macro_id)?;
 
-        println!("Expanded: {:?}", expanded);
-
         ctx.insert(expanded);
 
         Parse::parse(ctx)
@@ -986,6 +995,10 @@ mod ctx {
 
                 is_quoted: false,
             }
+        }
+
+        pub fn add(&mut self, tokens: Vec<Token>) {
+            self.tokens.extend(tokens);
         }
 
         pub fn read(&mut self) -> Result<Token> {

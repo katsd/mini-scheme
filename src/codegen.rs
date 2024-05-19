@@ -3,18 +3,30 @@ use crate::obj::*;
 use crate::vm::Inst;
 use builder::{Builder, TempInst};
 
-pub fn generate(ast: &syntax::AST, is_main: bool) -> Vec<Inst> {
-    let mut builder = Builder::new();
+pub struct CodeGen {
+    builder: Builder,
+}
 
-    for t in &ast.body {
-        t.gen(&mut builder, false);
+impl CodeGen {
+    pub fn new() -> Self {
+        Self {
+            builder: Builder::new(),
+        }
     }
 
-    if is_main {
-        builder.push(Inst::Exit);
-    }
+    pub fn generate(&mut self, ast: &syntax::AST, is_main: bool) -> Vec<Inst> {
+        self.builder.init();
 
-    builder.build()
+        for t in &ast.body {
+            t.gen(&mut self.builder, false);
+        }
+
+        if is_main {
+            self.builder.push(Inst::Exit);
+        }
+
+        self.builder.build()
+    }
 }
 
 pub fn join(l: Vec<Inst>, r: Vec<Inst>) -> Vec<Inst> {
@@ -742,6 +754,11 @@ mod builder {
                 id_table: Default::default(),
                 id_def_history: vec![vec![]],
             }
+        }
+
+        pub fn init(&mut self) {
+            self.label = 0;
+            self.insts = vec![];
         }
 
         pub fn get_label(&mut self) -> u32 {

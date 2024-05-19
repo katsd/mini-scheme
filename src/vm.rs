@@ -3,8 +3,11 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::read_to_string;
 use std::rc::Rc;
+use anyhow::{bail, Context as _, Result};
+use crate::codegen::CodeGen;
 
 use crate::obj::*;
+use crate::parser::Parser;
 
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -74,6 +77,9 @@ pub enum Inst {
 }
 
 pub struct VM {
+    parser: Parser,
+    codegen: CodeGen,
+
     insts: Vec<Inst>,
     pc: u32,
 
@@ -94,6 +100,9 @@ impl VM {
         });
 
         Self {
+            parser: Parser::new(),
+            codegen: CodeGen::new(),
+
             insts: vec![],
             pc: 0,
             sp: 0,
@@ -105,10 +114,20 @@ impl VM {
 
     pub fn exec(
         &mut self,
-        insts: Vec<Inst>,
+        src: String,
         stopper: Option<&std::sync::mpsc::Receiver<()>>,
-    ) -> Obj {
+        extra_insts: Option<Vec<Inst>>,
+    ) -> Result<Obj> {
         self.pc = self.insts.len() as u32;
+
+        let ast = self.parser.parse(src).context("Invalid syntax")?;
+        let mut insts = self.codegen.generate(&ast, true);
+
+        if let Some(extra) = extra_insts {
+            let _ = insts.pop();
+            insts.extend(extra)
+        };
+
         self.insts = crate::codegen::join(self.insts.clone(), insts);
 
         macro_rules! pop {
@@ -147,7 +166,7 @@ impl VM {
         loop {
             if let Some(stopper) = stopper {
                 if let Ok(_) = stopper.try_recv() {
-                    return Obj::Null;
+                    return Ok(Obj::Null);
                 }
             }
 
@@ -171,7 +190,7 @@ impl VM {
                     let prev = find_var(&id, &self.fp, &mut self.frame_stack, |obj| {
                         std::mem::replace(obj, v)
                     })
-                    .expect(&format!("{} is not defined", id.0));
+                    .context(format!("{} is not defined", id.0))?;
 
                     update_ref_cnt(&prev, &mut self.frame_stack, false);
                 }
@@ -199,7 +218,7 @@ impl VM {
                 }
                 Inst::Get(id) => {
                     let v = find_var(&id, &self.fp, &mut self.frame_stack, |obj| obj.clone())
-                        .expect(&format!("{} is not defined", id.0));
+                        .context(format!("{} is not defined", id.0))?;
 
                     push!(v);
                 }
@@ -223,7 +242,7 @@ impl VM {
                         fp: fp_parent,
                     } = pop_retaining_ref!()
                     else {
-                        panic!("Not closure")
+                        bail!("Not closure")
                     };
 
                     let new_frame = Frame {
@@ -351,18 +370,15 @@ impl VM {
                     continue;
                 }
                 Inst::Load => {
-                    let src = pop!().string();
-                    let src = read_to_string(&src).expect(&format!("Failed to open {}", src));
-
-                    let tokens = crate::lexer::get_tokens(src);
-                    let ast = crate::parser::parse(tokens).expect("Failed to parse");
+                    let src = pop!().string()?;
+                    let src = read_to_string(&src).context(format!("Failed to open {}", src))?;
 
                     let next_pc = self.insts.len() as u32;
 
-                    self.insts = crate::codegen::join(
-                        self.insts.clone(),
-                        crate::codegen::generate(&ast, false),
-                    );
+                    let ast = self.parser.parse(src).context("Invalid syntax")?;
+                    let insts = self.codegen.generate(&ast, false);
+
+                    self.insts = crate::codegen::join(self.insts.clone(), insts);
 
                     self.insts.push(Inst::Jump(self.pc + 1));
 
@@ -371,7 +387,7 @@ impl VM {
                     continue;
                 }
                 Inst::Exit => {
-                    return pop!();
+                    return Ok(pop!());
                 }
                 Inst::PushReturnContext(pc) => {
                     push!(Obj::Context {
@@ -401,8 +417,8 @@ impl VM {
                 | Inst::Le
                 | Inst::Gt
                 | Inst::Ge => {
-                    let l = pop!().number();
-                    let r = pop!().number();
+                    let l = pop!().number()?;
+                    let r = pop!().number()?;
 
                     let obj = if let (Number::Int(l), Number::Int(r)) = (l, r) {
                         match &inst {
@@ -438,10 +454,10 @@ impl VM {
                     push!(obj);
                 }
                 Inst::And => {
-                    push!(Obj::Bool(pop!().bool() && pop!().bool()));
+                    push!(Obj::Bool(pop!().bool()? && pop!().bool()?));
                 }
                 Inst::Or => {
-                    push!(Obj::Bool(pop!().bool() || pop!().bool()));
+                    push!(Obj::Bool(pop!().bool()? || pop!().bool()?));
                 }
                 Inst::Not => {
                     push!(Obj::Bool(pop!() == Obj::Bool(false)));
@@ -455,7 +471,7 @@ impl VM {
                 }
                 Inst::Car => {
                     let Obj::Pair(v) = pop_retaining_ref!() else {
-                        panic!("Not Pair")
+                        bail!("Not Pair")
                     };
 
                     let v = v.borrow();
@@ -468,7 +484,7 @@ impl VM {
                 }
                 Inst::Cdr => {
                     let Obj::Pair(v) = pop_retaining_ref!() else {
-                        panic!("Not Pair")
+                        bail!("Not Pair")
                     };
 
                     let v = v.borrow();
@@ -483,7 +499,7 @@ impl VM {
                     let v = pop_retaining_ref!();
                     let l = pop_retaining_ref!();
 
-                    let Obj::Pair(v) = v else { panic!("Not Pair") };
+                    let Obj::Pair(v) = v else { bail!("Not Pair") };
 
                     let mut v = v.borrow_mut();
 
@@ -495,7 +511,7 @@ impl VM {
                     let v = pop_retaining_ref!();
                     let r = pop_retaining_ref!();
 
-                    let Obj::Pair(v) = v else { panic!("Not Pair") };
+                    let Obj::Pair(v) = v else { bail!("Not Pair") };
 
                     let mut v = v.borrow_mut();
 
@@ -506,7 +522,7 @@ impl VM {
                 Inst::ExpandList => {
                     let v = pop_retaining_ref!();
 
-                    for e in v.list_elems().into_iter().rev() {
+                    for e in v.list_elems()?.into_iter().rev() {
                         push!(e);
                     }
                 }
@@ -567,15 +583,15 @@ impl VM {
                     push!(Obj::Bool(pop!() == pop!()))
                 }
                 Inst::SymToStr => {
-                    let v = pop!().id();
+                    let v = pop!().id()?;
                     push!(Obj::String(v.0));
                 }
                 Inst::StrToSym => {
-                    let v = pop!().string();
+                    let v = pop!().string()?;
                     push!(Obj::Id(Id(v)));
                 }
                 Inst::StrToNum => {
-                    let v = pop!().string();
+                    let v = pop!().string()?;
                     if let Ok(n) = v.parse::<i64>() {
                         push!(Obj::Number(Number::Int(n)));
                     } else if let Ok(n) = v.parse::<f64>() {
@@ -585,12 +601,12 @@ impl VM {
                     }
                 }
                 Inst::NumToStr => {
-                    let v = pop!().number();
+                    let v = pop!().number()?;
                     push!(Obj::String(format!("{}", v)));
                 }
                 Inst::StringAppend => {
-                    let l = pop!().string();
-                    let r = pop!().string();
+                    let l = pop!().string()?;
+                    let r = pop!().string()?;
 
                     push!(Obj::String(format!("{}{}", l, r)));
                 }

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+use anyhow::{bail, Result};
 
 #[derive(Debug, Clone)]
 pub enum Obj {
@@ -76,45 +77,48 @@ fn display_pair(pair: &(Obj, Obj)) -> String {
 }
 
 impl Obj {
-    pub fn bool(self) -> bool {
+    pub fn bool(self) -> Result<bool> {
         let Self::Bool(n) = self else {
-            panic!("Not Bool")
+            bail!("Not Bool")
         };
 
-        n
+        Ok(n)
     }
 
-    pub fn number(self) -> Number {
+    pub fn number(self) -> Result<Number> {
         let Self::Number(n) = self else {
-            panic!("Not Number")
+            bail!("Not Number")
         };
 
-        n
+        Ok(n)
     }
 
-    pub fn string(self) -> String {
+    pub fn string(self) -> Result<String> {
         let Self::String(n) = self else {
-            panic!("Not String")
+            bail!("Not String")
         };
 
-        n
+        Ok(n)
     }
 
-    pub fn id(self) -> Id {
-        let Self::Id(n) = self else { panic!("Not Id") };
+    pub fn id(self) -> Result<Id> {
+        let Self::Id(n) = self else { bail!("Not Id") };
 
-        n
+        Ok(n)
     }
 
-    pub fn list_elems(self) -> Vec<Obj> {
+    pub fn list_elems(self) -> Result<Vec<Obj>> {
         match self {
-            Obj::Null => vec![],
+            Obj::Null => Ok(vec![]),
             Obj::Pair(p) => {
                 let p = p.borrow();
 
-                vec![vec![p.0.clone()], p.1.clone().list_elems()].into_iter().flatten().collect()
+                Ok(vec![vec![p.0.clone()], p.1.clone().list_elems()?]
+                    .into_iter()
+                    .flatten()
+                    .collect())
             }
-            _ => panic!("Not List"),
+            _ => bail!("Not List"),
         }
     }
 }
