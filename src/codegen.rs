@@ -39,6 +39,18 @@ pub fn join(l: Vec<Inst>, r: Vec<Inst>) -> Vec<Inst> {
     insts
 }
 
+impl Id {
+    fn new(id: &syntax::Id, builder: &Builder) -> Self {
+        let id_ctx = builder.get_true_id_ctx(&id.v, id.id_ctx);
+
+        if id_ctx == 0 {
+            Self(id.v.clone())
+        } else {
+            Self(format!("{}~{}", id.v, id_ctx))
+        }
+    }
+}
+
 trait Gen {
     fn gen(&self, builder: &mut Builder, is_tail: bool);
 }
@@ -72,9 +84,10 @@ impl Gen for syntax::Define {
 
 impl Gen for syntax::DefVar {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
-        builder.push(Inst::Def(Id(self.id.v.clone())));
+        builder.def(&self.id.v, self.id.id_ctx);
+        builder.push(Inst::Def(Id::new(&self.id, builder)));
         self.exp.gen(builder, false);
-        builder.push(Inst::Set(Id(self.id.v.clone())));
+        builder.push(Inst::Set(Id::new(&self.id, builder)));
         builder.push(Inst::Push(Obj::Null));
     }
 }
@@ -126,6 +139,8 @@ impl Gen for syntax::Exp {
 
 impl Gen for syntax::Lambda {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        builder.enter_new_scope();
+
         let lambda_id = builder.get_label();
         let label = builder.get_label();
 
@@ -137,21 +152,24 @@ impl Gen for syntax::Lambda {
         match &self.arg {
             syntax::Arg::Args(args) => {
                 for id in args.args.iter() {
-                    builder.push(Inst::Def(Id(id.v.clone())));
-                    builder.push(Inst::Set(Id(id.v.clone())));
+                    builder.def(&id.v, id.id_ctx);
+                    builder.push(Inst::Def(Id::new(id, builder)));
+                    builder.push(Inst::Set(Id::new(id, builder)));
                 }
 
                 if let Some(id) = &args.varg {
-                    builder.push(Inst::Def(Id(id.v.clone())));
-                    builder.push(Inst::CollectVArg(Id(id.v.clone())));
-                    builder.push(Inst::Set(Id(id.v.clone())));
+                    builder.def(&id.v, id.id_ctx);
+                    builder.push(Inst::Def(Id::new(id, builder)));
+                    builder.push(Inst::CollectVArg(Id::new(id, builder)));
+                    builder.push(Inst::Set(Id::new(id, builder)));
                     builder.push(Inst::Push(Obj::Null));
                 }
             }
             syntax::Arg::VArg(id) => {
-                builder.push(Inst::Def(Id(id.v.clone())));
-                builder.push(Inst::CollectVArg(Id(id.v.clone())));
-                builder.push(Inst::Set(Id(id.v.clone())));
+                builder.def(&id.v, id.id_ctx);
+                builder.push(Inst::Def(Id::new(id, builder)));
+                builder.push(Inst::CollectVArg(Id::new(id, builder)));
+                builder.push(Inst::Set(Id::new(id, builder)));
                 builder.push(Inst::Push(Obj::Null));
             }
         }
@@ -161,6 +179,8 @@ impl Gen for syntax::Lambda {
         builder.push(Inst::Ret);
 
         builder.push_label(label);
+
+        builder.exit_cur_scope();
     }
 }
 
@@ -262,7 +282,7 @@ impl Gen for syntax::Quote {
 impl Gen for syntax::Set {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
         self.exp.gen(builder, false);
-        builder.push(Inst::Set(Id(self.id.v.clone())));
+        builder.push(Inst::Set(Id::new(&self.id, builder)));
         builder.push(Inst::Push(Obj::Null));
     }
 }
@@ -517,6 +537,8 @@ impl Gen for syntax::Begin {
 
 impl Gen for syntax::Do {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
+        builder.enter_new_scope();
+
         let label_start = builder.get_label();
         let label_exit = builder.get_label();
         let lambda_id = builder.get_label();
@@ -575,6 +597,8 @@ impl Gen for syntax::Do {
 
         builder.push(Inst::Call);
         builder.push_label(label_exit);
+
+        builder.exit_cur_scope();
     }
 }
 
@@ -625,7 +649,7 @@ impl Gen for syntax::SExp {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match self {
             Self::Const(t) => t.gen(builder, false),
-            Self::Id(t) => builder.push(Inst::Push(Obj::Id(Id(t.v.clone())))),
+            Self::Id(t) => builder.push(Inst::Push(Obj::Id(Id::new(t, builder)))),
             Self::Pair(t) => t.gen(builder, false),
         }
     }
@@ -683,16 +707,20 @@ impl Gen for syntax::Null {
 
 impl Gen for syntax::Id {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
-        builder.push(Inst::Get(Id(self.v.clone())));
+        builder.push(Inst::Get(Id::new(&self, builder)));
     }
 }
 
 mod builder {
+    use std::collections::HashMap;
     use super::*;
 
     pub struct Builder {
         label: u32,
         insts: Vec<TempInst>,
+
+        id_table: HashMap<String, Vec<u32>>,
+        id_def_history: Vec<Vec<String>>,
     }
 
     #[derive(Debug)]
@@ -710,6 +738,9 @@ mod builder {
             Self {
                 label: 0,
                 insts: vec![],
+
+                id_table: Default::default(),
+                id_def_history: vec![vec![]],
             }
         }
 
@@ -761,6 +792,42 @@ mod builder {
             }
 
             insts
+        }
+
+        pub fn enter_new_scope(&mut self) {
+            self.id_def_history.push(vec![]);
+        }
+
+        pub fn exit_cur_scope(&mut self) {
+            let history = self.id_def_history.pop().unwrap();
+
+            for id in history {
+                if let Some(table) = self.id_table.get_mut(&id) {
+                    let _ = table.pop();
+                }
+            }
+        }
+
+        pub fn def(&mut self, id: &String, id_ctx: u32) {
+            self.id_def_history.last_mut().unwrap().push(id.clone());
+
+            if let Some(table) = self.id_table.get_mut(id) {
+                table.push(id_ctx);
+            } else {
+                self.id_table.insert(id.clone(), vec![id_ctx]);
+            }
+        }
+
+        pub fn get_true_id_ctx(&self, id: &String, id_ctx: u32) -> u32 {
+            let Some(table) = self.id_table.get(id) else {
+                return 0;
+            };
+
+            if table.contains(&id_ctx) {
+                id_ctx
+            } else {
+                *table.last().unwrap_or(&0)
+            }
         }
     }
 }

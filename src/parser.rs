@@ -307,6 +307,7 @@ impl Parse for Apply {
 impl Parse for Quote {
     fn parse(ctx: &mut Context) -> Result<Self> {
         ctx.start();
+        ctx.enter_quote();
 
         let s_exp = if ctx.peek(0)?.kind == TokenKind::SingleQuote {
             ensure_symbol!(ctx, TokenKind::SingleQuote, "'");
@@ -322,6 +323,8 @@ impl Parse for Quote {
 
             s_exp
         };
+
+        ctx.exit_quote();
 
         Ok(Self {
             meta: ctx.meta(),
@@ -859,8 +862,11 @@ impl Parse for Id {
             //bail!("Not Id")
         };
 
+        let id_ctx = if ctx.is_quoted() { 0 } else { t.meta.id_ctx };
+
         Ok(Id {
             meta: t.meta,
+            id_ctx,
             v: id,
         })
     }
@@ -959,6 +965,11 @@ mod ctx {
         parse_origins: Vec<usize>,
 
         syntax_defs: HashMap<String, DefineSyntax>,
+
+        id_ctxs: Vec<u32>,
+        id_ctx_cnt: u32,
+
+        is_quoted: bool,
     }
 
     impl Context {
@@ -967,7 +978,13 @@ mod ctx {
                 tokens,
                 i: 0,
                 parse_origins: vec![],
+
                 syntax_defs: Default::default(),
+
+                id_ctxs: vec![0],
+                id_ctx_cnt: 0,
+
+                is_quoted: false,
             }
         }
 
@@ -1057,6 +1074,8 @@ mod ctx {
                     .clone()
             };
 
+            self.enter_new_id_ctx();
+
             for rule in &def.syntax_rules {
                 let mut ctx = self.clone();
 
@@ -1112,13 +1131,43 @@ mod ctx {
                         }
                     }
 
-                    expanded.push(t.clone());
+                    let mut t = t.clone();
+                    t.meta.id_ctx = self.get_id_ctx();
+
+                    expanded.push(t);
                 }
+
+                self.exit_cur_id_ctx();
 
                 return Ok(expanded);
             }
 
             bail!("Invalid syntax")
+        }
+
+        pub fn get_id_ctx(&self) -> u32 {
+            *self.id_ctxs.last().unwrap()
+        }
+
+        pub fn enter_new_id_ctx(&mut self) {
+            self.id_ctx_cnt += 1;
+            self.id_ctxs.push(self.id_ctx_cnt);
+        }
+
+        pub fn exit_cur_id_ctx(&mut self) {
+            let _ = self.id_ctxs.pop();
+        }
+
+        pub fn enter_quote(&mut self) {
+            self.is_quoted = true;
+        }
+
+        pub fn exit_quote(&mut self) {
+            self.is_quoted = false;
+        }
+
+        pub fn is_quoted(&self) -> bool {
+            self.is_quoted
         }
     }
 }

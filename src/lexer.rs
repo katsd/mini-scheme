@@ -10,12 +10,14 @@ pub struct Token {
 #[derive(Debug, Clone, Default)]
 pub struct Meta {
     pub range: Range<usize>,
+    pub id_ctx: u32,
 }
 
 impl Meta {
     pub fn join(l: &Self, r: &Self) -> Self {
         Self {
             range: l.range.start..r.range.end,
+            id_ctx: l.id_ctx,
         }
     }
 }
@@ -64,6 +66,7 @@ pub fn get_tokens(src: String) -> Vec<Token> {
 
         let meta = Meta {
             range: idx..idx_cur,
+            id_ctx: 0,
         };
 
         idx = idx_cur;
