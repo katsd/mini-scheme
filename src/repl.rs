@@ -27,7 +27,7 @@ pub fn run() {
         }
 
         let tokens = crate::lexer::get_tokens(input.into());
-        let Ok(mut ast) = crate::parser::parse(tokens) else {
+        let Ok(ast) = crate::parser::parse(tokens) else {
             println!("syntax error");
             continue;
         };

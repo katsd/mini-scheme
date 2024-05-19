@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::lexer::{Meta, Token, TokenKind};
 use crate::syntax::*;
 use anyhow::{bail, ensure, Result};
@@ -14,7 +15,7 @@ macro_rules! ensure_paren_open {
 macro_rules! ensure_paren_close {
     ($ctx:expr) => {
         if $ctx.read()?.kind != TokenKind::ParenClose {
-            bail!("')' expected");
+            panic!("')' expected");
         }
     };
 }
@@ -46,16 +47,88 @@ where
     fn parse(ctx: &mut Context) -> Result<Self>;
 }
 
+impl<T> Parse for Vec<T>
+where
+    T: Parse,
+{
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        let mut res = vec![];
+
+        while ctx.peek(0)?.kind != TokenKind::ParenClose {
+            res.push(T::parse(ctx)?);
+        }
+
+        Ok(res)
+    }
+}
+
 impl Parse for Toplevel {
     fn parse(ctx: &mut Context) -> Result<Self> {
         match ctx.peek(0)?.kind {
             TokenKind::ParenOpen => match ctx.peek(1)?.kind {
+                TokenKind::DefineSyntax => {
+                    let syntax_def = DefineSyntax::parse(ctx)?;
+
+                    println!("{:?}", syntax_def);
+
+                    ctx.add_syntax_def(syntax_def);
+
+                    Ok(Self::DefineSyntax)
+                }
                 TokenKind::Define => Ok(Self::Define(Parse::parse(ctx)?)),
                 TokenKind::Load => Ok(Self::Load(Parse::parse(ctx)?)),
                 _ => Ok(Self::Exp(Parse::parse(ctx)?)),
             },
             _ => Ok(Self::Exp(Parse::parse(ctx)?)),
         }
+    }
+}
+
+impl Parse for DefineSyntax {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+        ensure_symbol!(ctx, TokenKind::DefineSyntax, "define-syntax");
+
+        let id = Parse::parse(ctx)?;
+
+        ensure_paren_open!(ctx);
+        ensure_symbol!(ctx, TokenKind::SyntaxRules, "syntax-rules");
+
+        ensure_paren_open!(ctx);
+        let keywords = Parse::parse(ctx)?;
+        ensure_paren_close!(ctx);
+
+        let syntax_rules = Parse::parse(ctx)?;
+
+        ensure_paren_close!(ctx);
+
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            id,
+            keywords,
+            syntax_rules,
+        })
+    }
+}
+
+impl Parse for SyntaxRule {
+    fn parse(ctx: &mut Context) -> Result<Self> {
+        ctx.start();
+
+        ensure_paren_open!(ctx);
+        let syntax = ctx.read_next_chunk()?;
+        let template = ctx.read_next_chunk()?;
+        ensure_paren_close!(ctx);
+
+        Ok(Self {
+            meta: ctx.meta(),
+            syntax,
+            template,
+        })
     }
 }
 
@@ -163,7 +236,17 @@ impl Parse for Exp {
                 TokenKind::Or => Ok(Self::Or(Box::new(Parse::parse(ctx)?))),
                 TokenKind::Begin => Ok(Self::Begin(Box::new(Parse::parse(ctx)?))),
                 TokenKind::Do => Ok(Self::Do(Box::new(Parse::parse(ctx)?))),
-                _ => Ok(Self::Apply(Box::new(Parse::parse(ctx)?))),
+                _ => {
+                    let id = ctx.peek(1)?;
+
+                    if let TokenKind::Id(id) = &id.kind {
+                        if ctx.is_macro(id) {
+                            return Self::expand_macro(ctx);
+                        }
+                    }
+
+                    Ok(Self::Apply(Box::new(Parse::parse(ctx)?)))
+                }
             },
             TokenKind::SingleQuote => Ok(Self::Quote(Box::new(Parse::parse(ctx)?))),
 
@@ -783,15 +866,99 @@ impl Parse for Id {
     }
 }
 
-mod ctx {
-    use anyhow::{ensure, Result};
-    use crate::lexer::Meta;
-    use super::Token;
+impl Exp {
+    fn expand_macro(ctx: &mut Context) -> Result<Self> {
+        let macro_id = {
+            let TokenKind::Id(macro_id) = &ctx.peek(1)?.kind else {
+                bail!("Not Macro")
+            };
 
+            macro_id.clone()
+        };
+
+        let expanded = ctx.expand_macro(macro_id)?;
+
+        println!("Expanded: {:?}", expanded);
+
+        ctx.insert(expanded);
+
+        Parse::parse(ctx)
+    }
+}
+
+impl DefineSyntax {
+    fn is_keyword(&self, id: &String) -> bool {
+        self.keywords.iter().find(|k| &k.v == id).is_some()
+    }
+}
+
+impl SyntaxRule {
+    fn try_match(
+        &self,
+        def: &DefineSyntax,
+        ctx: &mut Context,
+    ) -> Result<HashMap<String, Vec<Token>>> {
+        let mut reps = HashMap::<String, Vec<Token>>::new();
+
+        for t in &self.syntax {
+            match &t.kind {
+                TokenKind::ParenOpen | TokenKind::ParenClose | TokenKind::Period => {
+                    if ctx.read()?.kind != t.kind {
+                        bail!("Invalid syntax");
+                    }
+                }
+                TokenKind::Id(id) => {
+                    if id == "_" {
+                        ctx.read_next_chunk()?;
+                        continue;
+                    }
+
+                    if def.is_keyword(id) {
+                        if let TokenKind::Id(t) = ctx.read()?.kind {
+                            if id != &t {
+                                bail!("Invalid syntax");
+                            }
+                        } else {
+                            bail!("Invalid syntax");
+                        }
+
+                        continue;
+                    }
+
+                    reps.insert(id.clone(), ctx.read_next_chunk()?);
+                }
+                TokenKind::Ellipsis => {
+                    let mut rep = vec![];
+
+                    while ctx.peek(0)?.kind != TokenKind::ParenClose {
+                        rep.extend(ctx.read_next_chunk()?);
+                    }
+
+                    reps.insert("...".into(), rep);
+                }
+                _ => {
+                    bail!("Invalid syntax");
+                }
+            }
+        }
+
+        Ok(reps)
+    }
+}
+
+mod ctx {
+    use std::collections::HashMap;
+    use anyhow::{Context as _, ensure, Result};
+    use crate::lexer::Meta;
+    use super::*;
+
+    #[derive(Clone)]
     pub struct Context {
         tokens: Vec<Token>,
         i: usize,
         parse_origins: Vec<usize>,
+
+        syntax_defs: HashMap<String, DefineSyntax>,
     }
 
     impl Context {
@@ -800,6 +967,7 @@ mod ctx {
                 tokens,
                 i: 0,
                 parse_origins: vec![],
+                syntax_defs: Default::default(),
             }
         }
 
@@ -820,6 +988,38 @@ mod ctx {
             Ok(&self.tokens[(self.i as isize + n) as usize])
         }
 
+        pub fn read_next_chunk(&mut self) -> Result<Vec<Token>> {
+            match self.peek(0)?.kind {
+                TokenKind::ParenOpen => (),
+                TokenKind::SingleQuote => {
+                    return Ok(vec![vec![self.read()?], self.read_next_chunk()?].concat())
+                }
+                _ => return Ok(vec![self.read()?]),
+            };
+
+            let mut paren_stack = 0;
+
+            let mut res = vec![];
+
+            loop {
+                let t = self.read()?;
+
+                match &t.kind {
+                    TokenKind::ParenOpen => paren_stack += 1,
+                    TokenKind::ParenClose => paren_stack -= 1,
+                    _ => (),
+                };
+
+                res.push(t);
+
+                if paren_stack == 0 {
+                    break;
+                }
+            }
+
+            Ok(res)
+        }
+
         pub fn start(&mut self) {
             self.parse_origins.push(self.i);
         }
@@ -833,6 +1033,92 @@ mod ctx {
 
         pub fn has_token(&self) -> bool {
             self.i < self.tokens.len()
+        }
+
+        pub fn insert(&mut self, tokens: Vec<Token>) {
+            self.tokens.splice(self.i..self.i, tokens);
+        }
+
+        pub fn add_syntax_def(&mut self, def: DefineSyntax) {
+            self.syntax_defs.insert(def.id.v.clone(), def);
+        }
+
+        pub fn is_macro(&self, id: &String) -> bool {
+            self.syntax_defs.iter().find(|i| i.0 == id).is_some()
+        }
+
+        pub fn expand_macro(&mut self, id: String) -> Result<Vec<Token>> {
+            let def = {
+                self.syntax_defs
+                    .iter()
+                    .find(|i| i.0 == &id)
+                    .context(format!("Macro {} is not defined", id))?
+                    .1
+                    .clone()
+            };
+
+            for rule in &def.syntax_rules {
+                let mut ctx = self.clone();
+
+                let Ok(reps) = rule.try_match(&def, &mut ctx) else {
+                    continue;
+                };
+
+                *self = ctx;
+
+                let mut expanded = vec![];
+
+                let mut quote_paren_stack = 0;
+                let mut is_quote = false;
+
+                for t in &rule.template {
+                    if t.kind == TokenKind::Quote {
+                        is_quote = true;
+                        quote_paren_stack = 1;
+                    }
+
+                    let is_single_quote = t.kind == TokenKind::SingleQuote;
+
+                    if is_single_quote {
+                        is_quote = true;
+                        quote_paren_stack = 0;
+                    }
+
+                    if is_quote {
+                        if t.kind == TokenKind::ParenOpen {
+                            quote_paren_stack += 1;
+                        } else if t.kind == TokenKind::ParenClose {
+                            quote_paren_stack -= 1;
+                        }
+                    }
+
+                    if !is_single_quote && quote_paren_stack == 0 {
+                        is_quote = false;
+                    }
+
+                    if !is_quote {
+                        if let TokenKind::Id(id) = &t.kind {
+                            if let Some(rep) = reps.get(id) {
+                                expanded.extend(rep.clone());
+                                continue;
+                            }
+                        }
+
+                        if &TokenKind::Ellipsis == &t.kind {
+                            if let Some(rep) = reps.get("...") {
+                                expanded.extend(rep.clone());
+                                continue;
+                            }
+                        }
+                    }
+
+                    expanded.push(t.clone());
+                }
+
+                return Ok(expanded);
+            }
+
+            bail!("Invalid syntax")
         }
     }
 }

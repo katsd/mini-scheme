@@ -46,6 +46,7 @@ trait Gen {
 impl Gen for syntax::Toplevel {
     fn gen(&self, builder: &mut Builder, is_tail: bool) {
         match &self {
+            syntax::Toplevel::DefineSyntax => (),
             syntax::Toplevel::Exp(t) => t.gen(builder, false),
             syntax::Toplevel::Define(t) => t.gen(builder, false),
             syntax::Toplevel::Load(t) => t.gen(builder, false),

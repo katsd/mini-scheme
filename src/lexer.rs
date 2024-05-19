@@ -1,4 +1,3 @@
-use std::mem::take;
 use std::ops::Range;
 use crate::obj::*;
 
@@ -26,8 +25,11 @@ pub enum TokenKind {
     ParenOpen,
     ParenClose,
     Period,
+    Ellipsis,
     SingleQuote,
 
+    DefineSyntax,
+    SyntaxRules,
     Load,
     Define,
     Lambda,
@@ -72,7 +74,10 @@ pub fn get_tokens(src: String) -> Vec<Token> {
             "(" => Some(TokenKind::ParenOpen),
             ")" => Some(TokenKind::ParenClose),
             "." => Some(TokenKind::Period),
+            "..." => Some(TokenKind::Ellipsis),
             "'" => Some(TokenKind::SingleQuote),
+            "define-syntax" => Some(TokenKind::DefineSyntax),
+            "syntax-rules" => Some(TokenKind::SyntaxRules),
             "load" => Some(TokenKind::Load),
             "define" => Some(TokenKind::Define),
             "lambda" => Some(TokenKind::Lambda),

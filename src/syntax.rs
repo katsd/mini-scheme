@@ -1,4 +1,4 @@
-use crate::lexer::Meta;
+use crate::lexer::{Token, Meta};
 use crate::obj::Number;
 
 #[derive(Debug, Clone)]
@@ -7,7 +7,23 @@ pub struct AST {
 }
 
 #[derive(Debug, Clone)]
+pub struct DefineSyntax {
+    pub meta: Meta,
+    pub id: Id,
+    pub keywords: Vec<Id>,
+    pub syntax_rules: Vec<SyntaxRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyntaxRule {
+    pub meta: Meta,
+    pub syntax: Vec<Token>,
+    pub template: Vec<Token>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Toplevel {
+    DefineSyntax,
     Exp(Exp),
     Define(Define),
     Load(Load),
