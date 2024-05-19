@@ -103,7 +103,11 @@ impl VM {
         }
     }
 
-    pub fn exec(&mut self, insts: Vec<Inst>, stopper: Option<&std::sync::mpsc::Receiver<()>>) -> Obj {
+    pub fn exec(
+        &mut self,
+        insts: Vec<Inst>,
+        stopper: Option<&std::sync::mpsc::Receiver<()>>,
+    ) -> Obj {
         self.pc = self.insts.len() as u32;
         self.insts = crate::codegen::join(self.insts.clone(), insts);
 
@@ -247,7 +251,25 @@ impl VM {
                         panic!("Not closure")
                     };
 
-                    if self.frame_stack[self.fp as usize].as_ref().unwrap().ref_cnt > 1 {
+                    let local_ref_cnt = self
+                        .frame_stack
+                        .get(self.fp as usize)
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .table
+                        .iter()
+                        .fold(0, |c, (_, obj)| {
+                            if let Obj::Closure { addr, fp } = obj {
+                                c + if *fp == self.fp { 1 } else { 0 }
+                            } else {
+                                c
+                            }
+                        });
+
+                    if self.frame_stack[self.fp as usize].as_ref().unwrap().ref_cnt - local_ref_cnt
+                        > 1
+                    {
                         let new_frame = Frame {
                             parent: Some(fp_parent),
                             table: Default::default(),
@@ -260,6 +282,18 @@ impl VM {
 
                         self.frame_stack[self.fp as usize] = Some(new_frame);
                     } else {
+                        for (_, obj) in self
+                            .frame_stack
+                            .get(self.fp as usize)
+                            .unwrap()
+                            .as_ref()
+                            .unwrap()
+                            .table
+                            .clone()
+                        {
+                            update_ref_cnt(&obj, &mut self.frame_stack, false);
+                        }
+
                         self.frame_stack[self.fp as usize] = Some(Frame {
                             parent: Some(fp_parent),
                             table: Default::default(),
