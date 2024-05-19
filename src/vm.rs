@@ -117,10 +117,11 @@ impl VM {
         src: String,
         stopper: Option<&std::sync::mpsc::Receiver<()>>,
         extra_insts: Option<Vec<Inst>>,
+        is_strict_syntax: bool,
     ) -> Result<Obj> {
         self.pc = self.insts.len() as u32;
 
-        let ast = self.parser.parse(src).context("Invalid syntax")?;
+        let ast = self.parser.parse(src, is_strict_syntax).context("Invalid syntax")?;
         let mut insts = self.codegen.generate(&ast, true);
 
         if let Some(extra) = extra_insts {
@@ -375,7 +376,7 @@ impl VM {
 
                     let next_pc = self.insts.len() as u32;
 
-                    let ast = self.parser.parse(src).context("Invalid syntax")?;
+                    let ast = self.parser.parse(src, true).context("Invalid syntax")?;
                     let insts = self.codegen.generate(&ast, false);
 
                     self.insts = crate::codegen::join(self.insts.clone(), insts);

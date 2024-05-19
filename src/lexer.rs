@@ -1,4 +1,5 @@
 use std::ops::Range;
+use anyhow::{Result, Context as _, bail};
 use crate::obj::*;
 
 #[derive(Debug, Clone)]
@@ -54,12 +55,14 @@ pub enum TokenKind {
     Str(String),
 }
 
-pub fn get_tokens(src: String) -> Vec<Token> {
+pub fn get_tokens(src: String, is_strict: bool) -> Result<Vec<Token>> {
     let mut reader = reader::Reader::new(src);
 
     let mut tokens = vec![];
 
     let mut idx = 0;
+
+    let id_reg = regex::Regex::new(r"^[0-9A-Za-z!$%&*+\-./<=>?@^_]+$").unwrap();
 
     while let Some(symbol) = read_next_symbol(&mut reader) {
         let mut idx_cur = reader.idx();
@@ -110,15 +113,20 @@ pub fn get_tokens(src: String) -> Vec<Token> {
                 } else if let Ok(n) = symbol.parse::<f64>() {
                     Some(TokenKind::Num(Number::from(n)))
                 } else {
-                    // TODO: id validation
-                    Some(TokenKind::Id(symbol.clone()))
+                    let id = symbol.clone();
+
+                    if !is_strict || id_reg.is_match(&id) {
+                        Some(TokenKind::Id(id))
+                    } else {
+                        bail!("Invalid ID ({})", id)
+                    }
                 }
             }
         }
         .map(|t| tokens.push(Token { meta, kind: t }));
     }
 
-    tokens
+    Ok(tokens)
 }
 
 fn read_next_symbol(reader: &mut reader::Reader) -> Option<String> {

@@ -213,15 +213,15 @@ impl Gen for syntax::Apply {
         let builtin_inst = if let syntax::Exp::Id(id) = func {
             match id.v.as_str() {
                 "display" => Some(Inst::Display),
-                "_+" => Some(Inst::Add),
-                "_-" => Some(Inst::Sub),
-                "_*" => Some(Inst::Mul),
-                "_/" => Some(Inst::Div),
-                "_=" => Some(Inst::Eq),
-                "_<" => Some(Inst::Lt),
-                "_<=" => Some(Inst::Le),
-                "_>" => Some(Inst::Gt),
-                "_>=" => Some(Inst::Ge),
+                "~+" => Some(Inst::Add),
+                "~-" => Some(Inst::Sub),
+                "~*" => Some(Inst::Mul),
+                "~/" => Some(Inst::Div),
+                "~=" => Some(Inst::Eq),
+                "~<" => Some(Inst::Lt),
+                "~<=" => Some(Inst::Le),
+                "~>" => Some(Inst::Gt),
+                "~>=" => Some(Inst::Ge),
                 "not" => Some(Inst::Not),
                 "cons" => Some(Inst::Cons),
                 "car" => Some(Inst::Car),
@@ -241,7 +241,7 @@ impl Gen for syntax::Apply {
                 "string->symbol" => Some(Inst::StrToSym),
                 "string->number" => Some(Inst::StrToNum),
                 "number->string" => Some(Inst::NumToStr),
-                "_string-append" => Some(Inst::StringAppend),
+                "~string-append" => Some(Inst::StringAppend),
                 _ => None,
             }
         } else {

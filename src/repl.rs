@@ -7,7 +7,7 @@ pub fn run() {
     let mut stdout = std::io::stdout();
 
     let mut vm = crate::vm::VM::new();
-    let _ = vm.exec(crate::prelude(), None, None);
+    let _ = vm.exec(crate::prelude(), None, None, false);
 
     let mut var_cnt = 0;
 
@@ -41,6 +41,7 @@ pub fn run() {
                 Inst::Get(var.clone()),
                 Inst::Exit,
             ]),
+            true,
         );
 
         match ret {

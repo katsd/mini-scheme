@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::lexer::{Meta, Token, TokenKind};
 use crate::syntax::*;
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Context as _, ensure, Result};
 use ctx::*;
 
 macro_rules! ensure_paren_open {
@@ -39,8 +39,9 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self, src: String) -> Result<AST> {
-        let tokens = crate::lexer::get_tokens(src);
+    pub fn parse(&mut self, src: String, is_strict_syntax: bool) -> Result<AST> {
+        let tokens =
+            crate::lexer::get_tokens(src, is_strict_syntax).context("Failed to tokenize")?;
         self.ctx.add(tokens);
 
         let mut body = vec![];

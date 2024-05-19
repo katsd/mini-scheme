@@ -24,8 +24,8 @@ fn main() {
 
     let mut vm = vm::VM::new();
 
-    let _ = vm.exec(prelude(), None, None);
-    let _ = vm.exec(src, None, None);
+    let _ = vm.exec(prelude(), None, None, false);
+    let _ = vm.exec(src, None, None, true);
 }
 
 fn prelude() -> String {
